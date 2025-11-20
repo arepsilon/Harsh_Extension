@@ -195,7 +195,10 @@ function performCalculation(values: number[], type: string): number[] {
             rankDense[indexed[i].i] = denseRank;
         }
         // Unique rank (ordinal position regardless of ties).
-        rankUnique = indexed.map((obj, i) => i + 1);
+        rankUnique = new Array(values.length).fill(0);
+        for (let i = 0; i < indexed.length; i++) {
+            rankUnique[indexed[i].i] = i + 1;
+        }
         // Modified rank – Tableau treats this like dense rank.
         rankModified = rankDense.slice();
     }
