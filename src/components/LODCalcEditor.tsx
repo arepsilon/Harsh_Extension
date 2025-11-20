@@ -152,9 +152,9 @@ export const LODCalcEditor = ({
                             </label>
                         </div>
                         <p className="mt-2 text-xs text-gray-500">
-                            {lodType === 'FIXED' && 'Calculate at a specific level regardless of view dimensions'}
-                            {lodType === 'INCLUDE' && 'Calculate including additional dimensions'}
-                            {lodType === 'EXCLUDE' && 'Calculate excluding certain dimensions'}
+                            {lodType === 'FIXED' && 'Calculate at exactly these dimensions, ignoring all view dimensions'}
+                            {lodType === 'INCLUDE' && 'Calculate at view dimensions PLUS these additional dimensions'}
+                            {lodType === 'EXCLUDE' && 'Calculate at view dimensions MINUS these dimensions'}
                         </p>
                     </div>
 
@@ -205,20 +205,19 @@ export const LODCalcEditor = ({
 
                         {/* Examples */}
                         <div className="mt-2 p-3 bg-blue-50 rounded text-xs text-blue-800">
-                            <div className="font-semibold mb-2">Examples:</div>
-                            <div className="font-mono space-y-1">
+                            <div className="font-semibold mb-2">LOD Calculation Examples:</div>
+                            <div className="space-y-2 text-gray-700">
                                 <div>
-                                    <span className="text-purple-700 font-semibold">FIXED:</span>
-                                    <span className="ml-2">SUM([Sales])</span>
-                                    <div className="text-gray-600 ml-4">Calculate total sales at the selected dimension level</div>
+                                    <div className="font-semibold text-purple-700">FIXED [Region]: SUM([Sales])</div>
+                                    <div className="ml-4">Total sales per region, regardless of other dimensions in view</div>
                                 </div>
-                                <div className="mt-2">
-                                    <span className="text-purple-700 font-semibold">Common use:</span>
-                                    <div className="ml-4 text-gray-600">
-                                        • FIXED [Region]: SUM([Sales]) - Total sales per region<br/>
-                                        • FIXED [Category]: AVG([Profit]) - Average profit per category<br/>
-                                        • FIXED [Customer]: COUNT([Orders]) - Order count per customer
-                                    </div>
+                                <div>
+                                    <div className="font-semibold text-green-700">INCLUDE [Product]: AVG([Sales])</div>
+                                    <div className="ml-4">If view shows [Region], this calculates avg at Region+Product level</div>
+                                </div>
+                                <div>
+                                    <div className="font-semibold text-orange-700">EXCLUDE [Quarter]: SUM([Sales])</div>
+                                    <div className="ml-4">If view shows [Region, Quarter], this calculates just at Region level</div>
                                 </div>
                             </div>
                         </div>
