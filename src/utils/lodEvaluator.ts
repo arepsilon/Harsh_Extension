@@ -236,13 +236,22 @@ export function enrichWithLODCalculations(
     };
 
     // Compute LOD calculation (always use FIXED logic with effective dimensions)
-    const lodResults = evaluateFIXED(enrichedData, columns, effectiveLodCalc);
+    // Use currentColumns so dimensions can reference previously calculated LOD fields
+    const lodResults = evaluateFIXED(enrichedData, currentColumns, effectiveLodCalc);
 
     // Store the results for later use
     lodFieldMap.set(lodCalc.name, lodResults);
 
     // Add the LOD field as a new column
-    const newColIndex = currentColumns.length;
+    // Find the maximum index in existing columns to avoid conflicts
+    const maxIndex = currentColumns.length > 0
+      ? Math.max(...currentColumns.map(c => c.index))
+      : -1;
+    const newColIndex = maxIndex + 1;
+
+    // Save current columns for lookup (before adding new column)
+    const columnsForLookup = [...currentColumns];
+
     currentColumns.push({
       fieldName: lodCalc.name,
       dataType: 'float',
@@ -252,14 +261,16 @@ export function enrichWithLODCalculations(
     // Add LOD values to each row by joining on effective dimensions
     enrichedData = enrichedData.map(row => {
       // Use effective dimensions to look up the LOD value for this row
-      const groupKey = createGroupKey(row, effectiveDimensions, columns);
+      const groupKey = createGroupKey(row, effectiveDimensions, columnsForLookup);
       const lodValue = lodResults.get(groupKey) ?? 0;
 
       return {
         ...row,
         [newColIndex]: {
           value: lodValue,
-          formattedValue: String(lodValue)
+          formattedValue: typeof lodValue === 'number' && !Number.isInteger(lodValue)
+            ? lodValue.toFixed(2)
+            : String(lodValue)
         }
       };
     });
