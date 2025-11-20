@@ -74,6 +74,14 @@ export interface TableCalculation {
     specificDimensions?: string[];  // If computeUsing is 'specific', which dimensions to address
 }
 
+export interface LODCalculation {
+    id: string;
+    name: string;
+    type: 'FIXED' | 'INCLUDE' | 'EXCLUDE';
+    dimensions: string[];  // Dimensions to fix/include/exclude
+    aggregation: string;   // The aggregation formula (e.g., "SUM([Sales])")
+}
+
 export interface ValueField {
     id: string;
     field: string;
@@ -87,6 +95,7 @@ export interface PivotConfig {
     values: ValueField[];
     calculatedFields?: CalculatedField[];
     tableCalculations?: TableCalculation[];
+    lodCalculations?: LODCalculation[];
 }
 
 export interface PivotNode {

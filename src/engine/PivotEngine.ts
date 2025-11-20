@@ -1,13 +1,28 @@
 import type { TableauDataTable, TableauDataRow, CalculatedField, ValueField, PivotConfig, PivotNode } from '../types';
 import { evaluateFormula, evaluateAggregationFormula } from '../utils/simpleEvaluator';
 import { applyTableCalculations } from '../utils/tableCalcEvaluator';
+import { enrichWithLODCalculations } from '../utils/lodEvaluator';
 
 export class PivotEngine {
     static pivot(data: TableauDataTable, config: PivotConfig): PivotNode {
         // Enrich data with ROW-LEVEL calculated fields first
-        const enrichedData = config.calculatedFields && config.calculatedFields.length > 0
+        let enrichedData = config.calculatedFields && config.calculatedFields.length > 0
             ? this.enrichWithCalculatedFields(data, config.calculatedFields)
             : data;
+
+        // Enrich data with LOD calculations
+        if (config.lodCalculations && config.lodCalculations.length > 0) {
+            const lodResult = enrichWithLODCalculations(
+                enrichedData.data,
+                enrichedData.columns,
+                config.lodCalculations
+            );
+            enrichedData = {
+                columns: lodResult.enrichedColumns,
+                data: lodResult.enrichedData,
+                totalRowCount: enrichedData.totalRowCount
+            };
+        }
 
         const root: PivotNode = { key: 'root', children: new Map(), values: {}, counts: {}, isLeaf: false };
 
