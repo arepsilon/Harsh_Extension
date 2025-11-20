@@ -32,13 +32,37 @@ export const useTableau = () => {
     const fetchSummaryData = async (worksheet: TableauWorksheet) => {
         setIsLoading(true);
         try {
-            // Fetch underlying data instead of summary data
-            const data = await worksheet.getUnderlyingDataAsync({
-                maxRows: 10000, // Limit for prototype
+            // Use getUnderlyingTableDataReaderAsync for better data access
+            // @ts-ignore
+            const dataReader = await worksheet.getUnderlyingTableDataReaderAsync(10000, {
                 ignoreSelection: true,
                 includeAllColumns: true
             });
-            setSummaryData(data);
+
+            // Read all pages of data
+            let allData: any[] = [];
+            let currentPage = 0;
+
+            for (let i = 0; i < dataReader.pageCount; i++) {
+                const page = await dataReader.getPageAsync(i);
+                allData = allData.concat(page.data);
+            }
+
+            // Release the data reader
+            await dataReader.releaseAsync();
+
+            // Format data to match TableauDataTable interface
+            const formattedData: TableauDataTable = {
+                columns: dataReader.columns.map((col: any) => ({
+                    fieldName: col.fieldName,
+                    dataType: col.dataType,
+                    index: col.index
+                })),
+                data: allData,
+                totalRowCount: allData.length
+            };
+
+            setSummaryData(formattedData);
         } catch (error) {
             console.error('Error fetching underlying data:', error);
         } finally {
