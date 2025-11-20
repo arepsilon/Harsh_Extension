@@ -2,8 +2,36 @@ import type { TableauDataRow, TableauColumn, LODCalculation } from '../types';
 import { parseAggregations } from './simpleEvaluator';
 
 /**
- * Evaluate LOD (Level of Detail) calculations
- * LOD calculations compute aggregations at different levels of granularity than the view
+ * LOD (Level of Detail) Calculation Engine
+ *
+ * LOD calculations compute aggregations at a different granularity than the visualization.
+ * They allow you to answer questions like "What is the total sales per region?" even when
+ * your view is showing data at the product level.
+ *
+ * How it works:
+ * 1. Determine effective dimensions based on LOD type (FIXED/INCLUDE/EXCLUDE)
+ * 2. Group the data by those effective dimensions
+ * 3. Apply the aggregation function to each group (inner aggregation)
+ * 4. Join the results back to each row (broadcast the value to matching rows)
+ * 5. The LOD field can then be used in further calculations or aggregations
+ *
+ * Three LOD Types:
+ * - FIXED: Use exactly the specified dimensions, ignoring view dimensions
+ *          Example: {FIXED [Region]: SUM([Sales])} always groups by Region
+ *
+ * - INCLUDE: Use view dimensions PLUS the specified dimensions
+ *           Example: {INCLUDE [Product]: AVG([Sales])} with view=[Region]
+ *           calculates at [Region, Product] level
+ *
+ * - EXCLUDE: Use view dimensions MINUS the specified dimensions
+ *           Example: {EXCLUDE [Quarter]: SUM([Sales])} with view=[Region, Quarter]
+ *           calculates at just [Region] level
+ *
+ * Key Principles:
+ * - LODs execute first, before table-level filters and view aggregations
+ * - The result is row-level: every row gets the aggregated value for its group
+ * - Nulls are treated as a distinct group in dimension grouping
+ * - Outer aggregation is applied when displaying (e.g., AVG of the LOD values)
  */
 
 interface GroupKey {
@@ -144,13 +172,41 @@ function evaluateFIXED(
 }
 
 /**
+ * Determine effective dimensions for an LOD calculation based on its type
+ */
+function getEffectiveDimensions(
+  lodCalc: LODCalculation,
+  viewDimensions: string[]
+): string[] {
+  switch (lodCalc.type) {
+    case 'FIXED':
+      // Use exactly the specified dimensions
+      return lodCalc.dimensions;
+
+    case 'INCLUDE':
+      // Union of view dimensions + specified dimensions
+      const includeDims = new Set([...viewDimensions, ...lodCalc.dimensions]);
+      return Array.from(includeDims);
+
+    case 'EXCLUDE':
+      // View dimensions minus specified dimensions
+      const excludeSet = new Set(lodCalc.dimensions);
+      return viewDimensions.filter(dim => !excludeSet.has(dim));
+
+    default:
+      return lodCalc.dimensions;
+  }
+}
+
+/**
  * Enrich data with LOD calculation results
- * For FIXED calculations: adds a new column with the computed value for each row
+ * LOD calculations compute aggregations at a different granularity than the view
  */
 export function enrichWithLODCalculations(
   data: TableauDataRow[],
   columns: TableauColumn[],
-  lodCalculations: LODCalculation[]
+  lodCalculations: LODCalculation[],
+  viewDimensions: string[]
 ): {
   enrichedData: TableauDataRow[];
   enrichedColumns: TableauColumn[];
@@ -170,27 +226,17 @@ export function enrichWithLODCalculations(
   let enrichedData = data;
 
   lodCalculations.forEach((lodCalc, index) => {
-    let lodResults: Map<string, number>;
+    // Determine the effective dimensions based on LOD type
+    const effectiveDimensions = getEffectiveDimensions(lodCalc, viewDimensions);
 
-    // Compute LOD calculation based on type
-    // Always use the original columns for dimension lookup since LOD dims are always from original data
-    switch (lodCalc.type) {
-      case 'FIXED':
-        lodResults = evaluateFIXED(enrichedData, columns, lodCalc);
-        break;
+    // Create a modified LOD calc with effective dimensions for evaluation
+    const effectiveLodCalc: LODCalculation = {
+      ...lodCalc,
+      dimensions: effectiveDimensions
+    };
 
-      case 'INCLUDE':
-      case 'EXCLUDE':
-        // For INCLUDE/EXCLUDE, we need context from the pivot view
-        // These will be handled differently - for now, treat as FIXED
-        // In a full implementation, INCLUDE/EXCLUDE need the current view dimensions
-        console.warn(`${lodCalc.type} LOD calculations require view context. Using FIXED behavior for now.`);
-        lodResults = evaluateFIXED(enrichedData, columns, lodCalc);
-        break;
-
-      default:
-        lodResults = new Map();
-    }
+    // Compute LOD calculation (always use FIXED logic with effective dimensions)
+    const lodResults = evaluateFIXED(enrichedData, columns, effectiveLodCalc);
 
     // Store the results for later use
     lodFieldMap.set(lodCalc.name, lodResults);
@@ -203,9 +249,10 @@ export function enrichWithLODCalculations(
       index: newColIndex
     });
 
-    // Add LOD values to each row
+    // Add LOD values to each row by joining on effective dimensions
     enrichedData = enrichedData.map(row => {
-      const groupKey = createGroupKey(row, lodCalc.dimensions, columns);
+      // Use effective dimensions to look up the LOD value for this row
+      const groupKey = createGroupKey(row, effectiveDimensions, columns);
       const lodValue = lodResults.get(groupKey) ?? 0;
 
       return {

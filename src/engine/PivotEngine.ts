@@ -12,10 +12,14 @@ export class PivotEngine {
 
         // Enrich data with LOD calculations
         if (config.lodCalculations && config.lodCalculations.length > 0) {
+            // View dimensions = rows + columns from the pivot configuration
+            const viewDimensions = [...config.rows, ...config.columns];
+
             const lodResult = enrichWithLODCalculations(
                 enrichedData.data,
                 enrichedData.columns,
-                config.lodCalculations
+                config.lodCalculations,
+                viewDimensions
             );
             enrichedData = {
                 columns: lodResult.enrichedColumns,
