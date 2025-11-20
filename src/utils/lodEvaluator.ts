@@ -49,27 +49,50 @@ function getFieldValue(row: TableauDataRow, fieldName: string, columns: TableauC
 }
 
 /**
+ * Get any value from a row for a specific field (for COUNT/COUNTD)
+ */
+function getFieldValueAny(row: TableauDataRow, fieldName: string, columns: TableauColumn[]): any {
+  const colIndex = columns.findIndex(c => c.fieldName === fieldName);
+  if (colIndex !== -1) {
+    return row[colIndex]?.value;
+  }
+  return null;
+}
+
+/**
  * Aggregate values using the specified aggregation function
  */
 function computeAggregation(
-  values: number[],
+  values: number[] | any[],
   func: string
 ): number {
   if (values.length === 0) return 0;
 
-  switch (func.toUpperCase()) {
+  const funcUpper = func.toUpperCase();
+
+  switch (funcUpper) {
     case 'SUM':
-      return values.reduce((sum, val) => sum + val, 0);
-    case 'AVG':
-      return values.reduce((sum, val) => sum + val, 0) / values.length;
-    case 'MIN':
-      return Math.min(...values);
-    case 'MAX':
-      return Math.max(...values);
+      return (values as number[]).reduce((sum, val) => sum + val, 0);
+    case 'AVG': {
+      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      if (numericValues.length === 0) return 0;
+      return numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
+    }
+    case 'MIN': {
+      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      return numericValues.length > 0 ? Math.min(...numericValues) : 0;
+    }
+    case 'MAX': {
+      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      return numericValues.length > 0 ? Math.max(...numericValues) : 0;
+    }
     case 'COUNT':
-      return values.length;
+      // Count non-null values
+      return values.filter(v => v != null).length;
     case 'COUNTD':
-      return new Set(values).size;
+      // Filter out null/undefined and count distinct values
+      const distinctValues = new Set(values.filter(v => v != null));
+      return distinctValues.size;
     default:
       return 0;
   }
@@ -91,12 +114,19 @@ function evaluateFIXED(
     return new Map();
   }
 
+  const funcUpper = aggregationInfo.func.toUpperCase();
+  const isCountAggregation = funcUpper === 'COUNT' || funcUpper === 'COUNTD';
+
   // Group data by the FIXED dimensions
-  const groups = new Map<string, number[]>();
+  const groups = new Map<string, any[]>();
 
   data.forEach(row => {
     const groupKey = createGroupKey(row, lodCalc.dimensions, columns);
-    const value = getFieldValue(row, aggregationInfo.field, columns);
+
+    // For COUNT/COUNTD, use any value type; for numeric aggregations, use numbers only
+    const value = isCountAggregation
+      ? getFieldValueAny(row, aggregationInfo.field, columns)
+      : getFieldValue(row, aggregationInfo.field, columns);
 
     if (!groups.has(groupKey)) {
       groups.set(groupKey, []);
@@ -136,13 +166,14 @@ export function enrichWithLODCalculations(
 
   // Store LOD results for each calculation
   const lodFieldMap = new Map<string, Map<string, number>>();
-  const newColumns = [...columns];
+  let currentColumns = [...columns];
   let enrichedData = data;
 
   lodCalculations.forEach((lodCalc, index) => {
     let lodResults: Map<string, number>;
 
     // Compute LOD calculation based on type
+    // Always use the original columns for dimension lookup since LOD dims are always from original data
     switch (lodCalc.type) {
       case 'FIXED':
         lodResults = evaluateFIXED(enrichedData, columns, lodCalc);
@@ -165,8 +196,8 @@ export function enrichWithLODCalculations(
     lodFieldMap.set(lodCalc.name, lodResults);
 
     // Add the LOD field as a new column
-    const newColIndex = newColumns.length;
-    newColumns.push({
+    const newColIndex = currentColumns.length;
+    currentColumns.push({
       fieldName: lodCalc.name,
       dataType: 'float',
       index: newColIndex
@@ -189,7 +220,7 @@ export function enrichWithLODCalculations(
 
   return {
     enrichedData,
-    enrichedColumns: newColumns,
+    enrichedColumns: currentColumns,
     lodFieldMap
   };
 }
