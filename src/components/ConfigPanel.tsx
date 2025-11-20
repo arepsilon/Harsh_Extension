@@ -9,7 +9,8 @@ import { SortableItem } from './SortableItem';
 import { ManualSortModal } from './ManualSortModal';
 import { SimpleCalcEditor } from './SimpleCalcEditor';
 import { TableCalcEditor } from './TableCalcEditor';
-import type { CalculatedField, TableCalculation } from '../types';
+import { LODCalcEditor } from './LODCalcEditor';
+import type { CalculatedField, TableCalculation, LODCalculation } from '../types';
 import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
@@ -72,6 +73,10 @@ export const ConfigPanel = ({
     const [showTableCalcEditor, setShowTableCalcEditor] = useState(false);
     const [editingTableCalc, setEditingTableCalc] = useState<TableCalculation | null>(null);
 
+    const [lodCalculations, setLodCalculations] = useState<LODCalculation[]>([]);
+    const [showLODEditor, setShowLODEditor] = useState(false);
+    const [editingLOD, setEditingLOD] = useState<LODCalculation | null>(null);
+
     const sensors = useSensors(
         useSensor(PointerSensor),
         useSensor(KeyboardSensor, {
@@ -103,6 +108,7 @@ export const ConfigPanel = ({
                         if (savedConfig.manualSortOrders) setManualSortOrders(savedConfig.manualSortOrders);
                         if (savedConfig.calculatedFields) setCalculatedFields(savedConfig.calculatedFields);
                         if (savedConfig.tableCalculations) setTableCalculations(savedConfig.tableCalculations);
+                        if (savedConfig.lodCalculations) setLodCalculations(savedConfig.lodCalculations);
 
                         if (savedConfig.showGrandTotals !== undefined) setShowColumnGrandTotals(savedConfig.showGrandTotals);
                     }
@@ -125,8 +131,13 @@ export const ConfigPanel = ({
             dataType: 'calculated',
             isCalculated: true
         }));
-        return [...baseCols, ...calcCols];
-    }, [summaryData, calculatedFields]);
+        const lodCols = lodCalculations.map(f => ({
+            fieldName: f.name,
+            dataType: 'lod',
+            isCalculated: true
+        }));
+        return [...baseCols, ...calcCols, ...lodCols];
+    }, [summaryData, calculatedFields, lodCalculations]);
 
     const pivotTree = useMemo(() => {
         if (!summaryData || (rows.length === 0 && columns.length === 0)) return null;
@@ -136,9 +147,10 @@ export const ConfigPanel = ({
             columns,
             values,
             calculatedFields,
-            tableCalculations
+            tableCalculations,
+            lodCalculations
         });
-    }, [summaryData, rows, columns, values, calculatedFields, tableCalculations]);
+    }, [summaryData, rows, columns, values, calculatedFields, tableCalculations, lodCalculations]);
 
     const getUniqueValuesForField = (field: string): string[] => {
         if (!summaryData) return [];
@@ -167,7 +179,8 @@ export const ConfigPanel = ({
                 sortConfigs,
                 manualSortOrders,
                 calculatedFields,
-                tableCalculations
+                tableCalculations,
+                lodCalculations
             };
             // @ts-ignore
             if (window.tableau) {
@@ -326,6 +339,27 @@ export const ConfigPanel = ({
     const handleEditTableCalculation = (tc: TableCalculation) => {
         setEditingTableCalc(tc);
         setShowTableCalcEditor(true);
+    };
+
+    const handleSaveLODCalculation = (lodCalc: Omit<LODCalculation, 'id'>) => {
+        if (editingLOD) {
+            setLodCalculations(prev => prev.map(lod =>
+                lod.id === editingLOD.id
+                    ? { ...lod, ...lodCalc }
+                    : lod
+            ));
+        } else {
+            setLodCalculations(prev => [...prev, {
+                id: `lod-${Date.now()}`,
+                ...lodCalc
+            }]);
+        }
+        setEditingLOD(null);
+    };
+
+    const handleEditLODCalculation = (lod: LODCalculation) => {
+        setEditingLOD(lod);
+        setShowLODEditor(true);
     };
 
     const renderPivotTable = () => {
@@ -654,6 +688,13 @@ export const ConfigPanel = ({
                                         + Calc
                                     </button>
                                     <button
+                                        onClick={() => { setEditingLOD(null); setShowLODEditor(true); }}
+                                        className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200"
+                                        title="Create LOD calculation"
+                                    >
+                                        + LOD
+                                    </button>
+                                    <button
                                         onClick={() => { setEditingTableCalc(null); setShowTableCalcEditor(true); }}
                                         className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200"
                                         disabled={values.length === 0}
@@ -665,17 +706,25 @@ export const ConfigPanel = ({
                             </div>
                             <div className="flex-1 overflow-y-auto">
                                 {availableColumns.map(col => (
-                                    <div key={col.fieldName} className={`mb-2 p-2 border rounded shadow-sm text-sm ${col.isCalculated ? 'bg-purple-50 border-purple-200' : 'bg-white'}`}>
+                                    <div key={col.fieldName} className={`mb-2 p-2 border rounded shadow-sm text-sm ${col.isCalculated ? (col.dataType === 'lod' ? 'bg-green-50 border-green-200' : 'bg-purple-50 border-purple-200') : 'bg-white'}`}>
                                         <div className="flex justify-between items-center mb-1">
                                             <div className="font-medium truncate flex items-center gap-1" title={col.fieldName}>
-                                                {col.isCalculated && <span className="text-purple-600 font-bold">=</span>}
+                                                {col.isCalculated && <span className={`font-bold ${col.dataType === 'lod' ? 'text-green-600' : 'text-purple-600'}`}>=</span>}
                                                 {col.fieldName}
                                             </div>
                                             <div className="flex items-center gap-1">
                                                 <span className="text-[10px] text-gray-400 bg-gray-100 px-1 rounded uppercase">{col.dataType}</span>
                                                 {col.isCalculated && (
                                                     <button
-                                                        onClick={() => handleEditCalculation(calculatedFields.find(c => c.name === col.fieldName)!)}
+                                                        onClick={() => {
+                                                            if (col.dataType === 'lod') {
+                                                                const lod = lodCalculations.find(l => l.name === col.fieldName);
+                                                                if (lod) handleEditLODCalculation(lod);
+                                                            } else {
+                                                                const calc = calculatedFields.find(c => c.name === col.fieldName);
+                                                                if (calc) handleEditCalculation(calc);
+                                                            }
+                                                        }}
                                                         className="text-xs text-gray-400 hover:text-blue-600"
                                                         title="Edit Calculation"
                                                     >
@@ -947,6 +996,14 @@ export const ConfigPanel = ({
                 initialCalculation={editingTableCalc?.calculation}
                 initialComputeUsing={editingTableCalc?.computeUsing}
                 initialSpecificDimensions={editingTableCalc?.specificDimensions}
+            />
+
+            <LODCalcEditor
+                isOpen={showLODEditor}
+                onClose={() => { setShowLODEditor(false); setEditingLOD(null); }}
+                onSave={handleSaveLODCalculation}
+                availableFields={summaryData?.columns.map(c => c.fieldName) || []}
+                initialLOD={editingLOD || undefined}
             />
         </div >
     );
