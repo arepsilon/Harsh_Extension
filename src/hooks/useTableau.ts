@@ -32,84 +32,60 @@ export const useTableau = () => {
     const fetchSummaryData = async (worksheet: TableauWorksheet) => {
         setIsLoading(true);
         try {
-            // Try using getUnderlyingTableDataReaderAsync first
-            console.log('Attempting to fetch data with getUnderlyingTableDataReaderAsync...');
+            console.log('Fetching data with getUnderlyingTableDataReaderAsync...');
 
-            // @ts-ignore
-            if (typeof worksheet.getUnderlyingTableDataReaderAsync === 'function') {
-                // @ts-ignore
-                const dataReader = await worksheet.getUnderlyingTableDataReaderAsync(10000);
-
-                console.log('Data reader created:', {
-                    pageCount: dataReader.pageCount,
-                    columnCount: dataReader.columns?.length
-                });
-
-                // Read all pages of data
-                let allData: any[] = [];
-
-                for (let i = 0; i < dataReader.pageCount; i++) {
-                    const page = await dataReader.getPageAsync(i);
-                    console.log(`Page ${i} fetched:`, page.data?.length, 'rows');
-                    allData = allData.concat(page.data);
+            // @ts-ignore - Always use getUnderlyingTableDataReaderAsync for complete data
+            const dataReader = await worksheet.getUnderlyingTableDataReaderAsync(
+                10000,  // pageRowCount - number of rows per page
+                {
+                    ignoreSelection: true,
+                    includeAllColumns: true
                 }
+            );
 
-                console.log('Total rows fetched:', allData.length);
+            console.log('Data reader created:', {
+                pageCount: dataReader.pageCount,
+                columnCount: dataReader.columns?.length,
+                totalRowCount: dataReader.totalRowCount
+            });
 
-                // Release the data reader
-                await dataReader.releaseAsync();
+            // Read all pages of data
+            let allData: any[] = [];
 
-                // Format data to match TableauDataTable interface
-                // Columns from dataReader don't have an index property, so we assign them
-                const formattedData: TableauDataTable = {
-                    columns: dataReader.columns.map((col: any, idx: number) => ({
-                        fieldName: col.fieldName,
-                        dataType: col.dataType,
-                        index: idx  // Use array index since dataReader doesn't provide it
-                    })),
-                    data: allData,
-                    totalRowCount: allData.length
-                };
-
-                console.log('Formatted data successfully:', {
-                    columnCount: formattedData.columns.length,
-                    rowCount: formattedData.totalRowCount
-                });
-
-                setSummaryData(formattedData);
-            } else {
-                // Fallback to getUnderlyingDataAsync
-                console.log('getUnderlyingTableDataReaderAsync not available, using fallback...');
-                const data = await worksheet.getUnderlyingDataAsync({
-                    maxRows: 10000,
-                    ignoreSelection: true,
-                    includeAllColumns: true
-                });
-
-                console.log('Fallback data fetched:', {
-                    columnCount: data.columns?.length,
-                    rowCount: data.data?.length
-                });
-
-                setSummaryData(data);
+            for (let i = 0; i < dataReader.pageCount; i++) {
+                const page = await dataReader.getPageAsync(i);
+                console.log(`Page ${i} fetched:`, page.data?.length, 'rows');
+                allData = allData.concat(page.data);
             }
+
+            console.log('Total rows fetched:', allData.length);
+
+            // Release the data reader
+            await dataReader.releaseAsync();
+
+            // Format data to match TableauDataTable interface
+            const formattedData: TableauDataTable = {
+                columns: dataReader.columns.map((col: any, idx: number) => ({
+                    fieldName: col.fieldName,
+                    dataType: col.dataType,
+                    index: idx
+                })),
+                data: allData,
+                totalRowCount: allData.length
+            };
+
+            console.log('Formatted data successfully:', {
+                columnCount: formattedData.columns.length,
+                rowCount: formattedData.totalRowCount,
+                columns: formattedData.columns.map(c => c.fieldName)
+            });
+
+            setSummaryData(formattedData);
         } catch (error) {
-            console.error('Error fetching underlying data:', error);
+            console.error('Error fetching underlying data with getUnderlyingTableDataReaderAsync:', error);
             console.error('Error stack:', (error as Error).stack);
-
-            // Try fallback method on error
-            try {
-                console.log('Attempting fallback method...');
-                const data = await worksheet.getUnderlyingDataAsync({
-                    maxRows: 10000,
-                    ignoreSelection: true,
-                    includeAllColumns: true
-                });
-                console.log('Fallback successful:', data.data?.length, 'rows');
-                setSummaryData(data);
-            } catch (fallbackError) {
-                console.error('Fallback also failed:', fallbackError);
-            }
+            // Don't use fallback - let the error surface so we can fix the real issue
+            alert('Failed to fetch data. Please check console for details.');
         } finally {
             setIsLoading(false);
         }
