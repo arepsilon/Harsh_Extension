@@ -34,9 +34,7 @@ import { parseAggregations } from './simpleEvaluator';
  * - Outer aggregation is applied when displaying (e.g., AVG of the LOD values)
  */
 
-interface GroupKey {
-  [dimension: string]: any;
-}
+
 
 /**
  * Parse an LOD aggregation formula and extract the field and function
@@ -67,13 +65,13 @@ function createGroupKey(row: TableauDataRow, dimensions: string[], columns: Tabl
 /**
  * Get value from a row for a specific field
  */
-function getFieldValue(row: TableauDataRow, fieldName: string, columns: TableauColumn[]): number {
+function getFieldValue(row: TableauDataRow, fieldName: string, columns: TableauColumn[]): number | null {
   const colIndex = columns.findIndex(c => c.fieldName === fieldName);
   if (colIndex !== -1) {
     const value = row[colIndex]?.value;
-    return typeof value === 'number' ? value : 0;
+    return typeof value === 'number' ? value : null;
   }
-  return 0;
+  return null;
 }
 
 /**
@@ -99,19 +97,21 @@ function computeAggregation(
   const funcUpper = func.toUpperCase();
 
   switch (funcUpper) {
-    case 'SUM':
-      return (values as number[]).reduce((sum, val) => sum + val, 0);
+    case 'SUM': {
+      const numericValues = (values as (number | null)[]).filter((v): v is number => typeof v === 'number' && !isNaN(v));
+      return numericValues.reduce((sum, val) => sum + val, 0);
+    }
     case 'AVG': {
-      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      const numericValues = (values as (number | null)[]).filter((v): v is number => typeof v === 'number' && !isNaN(v));
       if (numericValues.length === 0) return 0;
       return numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
     }
     case 'MIN': {
-      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      const numericValues = (values as (number | null)[]).filter((v): v is number => typeof v === 'number' && !isNaN(v));
       return numericValues.length > 0 ? Math.min(...numericValues) : 0;
     }
     case 'MAX': {
-      const numericValues = (values as number[]).filter(v => typeof v === 'number' && !isNaN(v));
+      const numericValues = (values as (number | null)[]).filter((v): v is number => typeof v === 'number' && !isNaN(v));
       return numericValues.length > 0 ? Math.max(...numericValues) : 0;
     }
     case 'COUNT':
@@ -225,7 +225,7 @@ export function enrichWithLODCalculations(
   let currentColumns = [...columns];
   let enrichedData = data;
 
-  lodCalculations.forEach((lodCalc, index) => {
+  lodCalculations.forEach((lodCalc, _index) => {
     // Determine the effective dimensions based on LOD type
     const effectiveDimensions = getEffectiveDimensions(lodCalc, viewDimensions);
 
@@ -242,12 +242,13 @@ export function enrichWithLODCalculations(
     // Store the results for later use
     lodFieldMap.set(lodCalc.name, lodResults);
 
-    // Add the LOD field as a new column
+    // Add LOD field as a new column
     // Find the maximum index in existing columns to avoid conflicts
     const maxIndex = currentColumns.length > 0
       ? Math.max(...currentColumns.map(c => c.index))
       : -1;
     const newColIndex = maxIndex + 1;
+    const keyColIndex = maxIndex + 2;
 
     // Save current columns for lookup (before adding new column)
     const columnsForLookup = [...currentColumns];
@@ -256,6 +257,13 @@ export function enrichWithLODCalculations(
       fieldName: lodCalc.name,
       dataType: 'float',
       index: newColIndex
+    });
+
+    // Add hidden key column for tracking unique values in PivotEngine
+    currentColumns.push({
+      fieldName: `__lod_key_${lodCalc.name}`,
+      dataType: 'string',
+      index: keyColIndex
     });
 
     // Add LOD values to each row by joining on effective dimensions
@@ -271,6 +279,10 @@ export function enrichWithLODCalculations(
           formattedValue: typeof lodValue === 'number' && !Number.isInteger(lodValue)
             ? lodValue.toFixed(2)
             : String(lodValue)
+        },
+        [keyColIndex]: {
+          value: groupKey,
+          formattedValue: groupKey
         }
       };
     });
@@ -288,7 +300,7 @@ export function enrichWithLODCalculations(
  * Used when evaluating formulas that reference LOD calculations
  */
 export function getLODValue(
-  row: TableauDataRow,
+  _row: TableauDataRow,
   lodCalcName: string,
   lodFieldMap: Map<string, Map<string, number>>,
   groupKey: string

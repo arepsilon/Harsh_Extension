@@ -28,7 +28,14 @@ export class PivotEngine {
             };
         }
 
-        const root: PivotNode = { key: 'root', children: new Map(), values: {}, counts: {}, isLeaf: false };
+        const root: PivotNode = {
+            key: 'root',
+            children: new Map(),
+            values: {},
+            counts: {},
+            isLeaf: false,
+            lodSeenKeys: new Map()
+        };
 
         // Map column names to indices
         const colIndices = new Map<string, number>();
@@ -203,6 +210,41 @@ export class PivotEngine {
                     node.values[key] = 0;
                     node.counts[key] = 0;
                 }
+
+                // Special handling for LOD calculations to avoid double-counting
+                const lodCalc = config.lodCalculations?.find(l => l.name === valConfig.field);
+                if (lodCalc) {
+                    // Initialize lodSeenKeys if missing (should be present from root)
+                    if (!node.lodSeenKeys) {
+                        node.lodSeenKeys = new Map();
+                    }
+
+                    // Get the hidden key column for this LOD
+                    const keyColName = `__lod_key_${lodCalc.name}`;
+                    const keyColIndex = colIndices.get(keyColName);
+
+                    if (keyColIndex !== undefined) {
+                        const lodKey = row[keyColIndex]?.value;
+
+                        // Create a unique identifier for this LOD field in this node
+                        const nodeLODId = `${key}::${lodCalc.name}`;
+
+                        if (!node.lodSeenKeys.has(nodeLODId)) {
+                            node.lodSeenKeys.set(nodeLODId, new Set());
+                        }
+
+                        const seenKeys = node.lodSeenKeys.get(nodeLODId)!;
+
+                        // If we've already seen this group key for this LOD in this node, skip aggregation
+                        if (seenKeys.has(lodKey)) {
+                            return;
+                        }
+
+                        // Mark as seen
+                        seenKeys.add(lodKey);
+                    }
+                }
+
                 switch (valConfig.agg) {
                     case 'SUM':
                     case 'AVG': // Sum now, divide later
@@ -250,7 +292,14 @@ export class PivotEngine {
 
         let child = node.children.get(value);
         if (!child) {
-            child = { key: value, children: new Map(), values: {}, counts: {}, isLeaf: false };
+            child = {
+                key: value,
+                children: new Map(),
+                values: {},
+                counts: {},
+                isLeaf: false,
+                lodSeenKeys: new Map()
+            };
             node.children.set(value, child);
         }
 

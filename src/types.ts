@@ -2,6 +2,20 @@ export interface TableauWorksheet {
     name: string;
     getSummaryDataAsync: (options?: any) => Promise<TableauDataTable>;
     getUnderlyingDataAsync: (options?: any) => Promise<TableauDataTable>;
+    getUnderlyingTableDataReaderAsync: (pageRowCount: number, options?: any) => Promise<any>;
+    getDataSourcesAsync: () => Promise<TableauDataSource[]>;
+}
+
+export interface TableauDataSource {
+    name: string;
+    getLogicalTablesAsync: () => Promise<TableauLogicalTable[]>;
+    getLogicalTableDataAsync: (logicalTableId: string, options?: any) => Promise<TableauDataTable>;
+    getLogicalTableDataReaderAsync: (logicalTableId: string, pageRowCount?: number) => Promise<any>;
+}
+
+export interface TableauLogicalTable {
+    id: string;
+    caption: string;
 }
 
 export interface TableauDataTable {
@@ -78,15 +92,22 @@ export interface LODCalculation {
     id: string;
     name: string;
     type: 'FIXED' | 'INCLUDE' | 'EXCLUDE';
-    dimensions: string[];  // Dimensions to fix/include/exclude
-    aggregation: string;   // The aggregation formula (e.g., "SUM([Sales])")
+    dimensions: string[];
+    aggregation: string;
+}
+
+export interface FormatConfig {
+    type: 'number' | 'currency' | 'percent';
+    decimals: number;
+    symbol?: string;
 }
 
 export interface ValueField {
     id: string;
     field: string;
     agg: 'SUM' | 'AVG' | 'MIN' | 'MAX' | 'COUNT' | 'COUNTD';
-    type?: 'field' | 'table_calc';
+    type: 'field' | 'calc' | 'table_calc';
+    format?: FormatConfig;
 }
 
 export interface PivotConfig {
@@ -104,4 +125,5 @@ export interface PivotNode {
     values: Record<string, number>;
     counts: Record<string, number>;
     isLeaf: boolean;
+    lodSeenKeys?: Map<string, Set<string>>; // Track seen LOD keys to avoid double counting
 }

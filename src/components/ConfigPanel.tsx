@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import type { TableauWorksheet, TableauDataTable } from '../types';
+import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig } from '../types';
 import { PivotEngine } from '../engine/PivotEngine';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -10,7 +10,6 @@ import { ManualSortModal } from './ManualSortModal';
 import { SimpleCalcEditor } from './SimpleCalcEditor';
 import { TableCalcEditor } from './TableCalcEditor';
 import { LODCalcEditor } from './LODCalcEditor';
-import type { CalculatedField, TableCalculation, LODCalculation } from '../types';
 import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
@@ -21,13 +20,6 @@ interface ConfigPanelProps {
     onSelectWorksheet: (worksheet: TableauWorksheet) => void;
     summaryData: TableauDataTable | null;
     isLoading: boolean;
-}
-
-interface ValueField {
-    id: string;
-    field: string;
-    agg: 'SUM' | 'AVG' | 'MIN' | 'MAX' | 'COUNT' | 'COUNTD';
-    type?: 'field' | 'table_calc';
 }
 
 interface SortConfig {
@@ -76,6 +68,7 @@ export const ConfigPanel = ({
     const [lodCalculations, setLodCalculations] = useState<LODCalculation[]>([]);
     const [showLODEditor, setShowLODEditor] = useState(false);
     const [editingLOD, setEditingLOD] = useState<LODCalculation | null>(null);
+    const [formatModal, setFormatModal] = useState<{ isOpen: boolean, valueId: string | null }>({ isOpen: false, valueId: null });
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -217,6 +210,8 @@ export const ConfigPanel = ({
             }
         } else if (type === 'val') {
             const isTableCalc = tableCalculations.find(tc => tc.name === field);
+            const isCalc = calculatedFields.find(c => c.name === field) || lodCalculations.find(l => l.name === field);
+
             if (values.find(v => v.field === field)) {
                 setValues(values.filter(v => v.field !== field));
             } else {
@@ -224,7 +219,7 @@ export const ConfigPanel = ({
                     id: `${field}-${Date.now()}`,
                     field,
                     agg: 'SUM',
-                    type: isTableCalc ? 'table_calc' : 'field'
+                    type: isTableCalc ? 'table_calc' : (isCalc ? 'calc' : 'field')
                 };
                 setValues([...values, newVal]);
                 if (!isTableCalc) {
@@ -356,7 +351,6 @@ export const ConfigPanel = ({
         }
         setEditingLOD(null);
     };
-
     const handleEditLODCalculation = (lod: LODCalculation) => {
         setEditingLOD(lod);
         setShowLODEditor(true);
@@ -365,9 +359,71 @@ export const ConfigPanel = ({
     const renderPivotTable = () => {
         if (!pivotTree) return <p className="text-gray-500 text-sm italic">Configure rows/cols to see preview.</p>;
 
+        // 1. Pre-calculate column totals for "Sort by Value"
+        const columnTotals: Record<string, Record<string, Record<string, number>>> = {}; // level -> colValue -> valueField -> total
+
         const allKeys = Object.keys(pivotTree.values)
-            .filter(k => !k.startsWith('__grand_total__'))
-            .sort();
+            .filter(k => !k.startsWith('__grand_total__'));
+
+        if (columns.length > 0) {
+            allKeys.forEach(key => {
+                const [colPart, valPart] = key.split('::');
+                const colValues = colPart ? colPart.split(' | ') : [];
+                const val = pivotTree.values[key] || 0;
+
+                colValues.forEach((colVal, level) => {
+                    const levelKey = `${level}`;
+                    if (!columnTotals[levelKey]) columnTotals[levelKey] = {};
+                    if (!columnTotals[levelKey][colVal]) columnTotals[levelKey][colVal] = {};
+
+                    if (!columnTotals[levelKey][colVal][valPart]) columnTotals[levelKey][colVal][valPart] = 0;
+                    columnTotals[levelKey][colVal][valPart] += val;
+                });
+            });
+        }
+
+        // 2. Sort Keys
+        allKeys.sort((a, b) => {
+            const [colPartA, valPartA] = a.split('::');
+            const [colPartB, valPartB] = b.split('::');
+            const colValuesA = colPartA ? colPartA.split(' | ') : [];
+            const colValuesB = colPartB ? colPartB.split(' | ') : [];
+
+            for (let i = 0; i < columns.length; i++) {
+                const colField = columns[i];
+                const valA = colValuesA[i] || '';
+                const valB = colValuesB[i] || '';
+
+                if (valA === valB) continue;
+
+                const sortConfig = sortConfigs[colField];
+                let comparison = 0;
+
+                if (sortConfig?.type === 'manual') {
+                    const manualOrder = manualSortOrders[colField] || [];
+                    const indexA = manualOrder.indexOf(valA);
+                    const indexB = manualOrder.indexOf(valB);
+
+                    if (indexA !== -1 && indexB !== -1) comparison = indexA - indexB;
+                    else if (indexA !== -1) comparison = -1;
+                    else if (indexB !== -1) comparison = 1;
+                    else comparison = valA.localeCompare(valB, undefined, { numeric: true });
+                } else if (sortConfig?.type === 'value' && sortConfig.field) {
+                    const totalA = columnTotals[`${i}`]?.[valA]?.[sortConfig.field] || 0;
+                    const totalB = columnTotals[`${i}`]?.[valB]?.[sortConfig.field] || 0;
+                    comparison = totalA - totalB;
+                } else {
+                    comparison = valA.localeCompare(valB, undefined, { numeric: true });
+                }
+
+                return sortConfig?.direction === 'desc' ? -comparison : comparison;
+            }
+
+            // If columns match (or no columns), sort by value field order
+            const indexA = values.findIndex(v => v.field === valPartA);
+            const indexB = values.findIndex(v => v.field === valPartB);
+            return indexA - indexB;
+        });
 
         const headerLevels: { label: string, span: number }[][] = [];
         const totalLevels = columns.length + 1;
@@ -488,7 +544,7 @@ export const ConfigPanel = ({
                                     const gtKey = columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
                                     return (
                                         <td key={`gt-left-${v.id}`} className="p-2 border-b border-r text-sm text-right font-bold bg-gray-50">
-                                            {child.values[gtKey]?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                                            {formatValue(child.values[gtKey], v.format)}
                                         </td>
                                     );
                                 })
@@ -498,7 +554,11 @@ export const ConfigPanel = ({
                                 const val = child.values[colKey];
                                 return (
                                     <td key={colKey} className="p-2 border-b text-sm text-right font-mono">
-                                        {typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}
+                                        {(() => {
+                                            const valPart = colKey.split('::').pop();
+                                            const valueField = values.find(v => v.field === valPart);
+                                            return formatValue(val, valueField?.format);
+                                        })()}
                                     </td>
                                 );
                             })}
@@ -508,7 +568,7 @@ export const ConfigPanel = ({
                                     const gtKey = columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
                                     return (
                                         <td key={`gt-right-${v.id}`} className="p-2 border-b border-l text-sm text-right font-bold bg-gray-50">
-                                            {child.values[gtKey]?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                                            {formatValue(child.values[gtKey], v.format)}
                                         </td>
                                     );
                                 })
@@ -541,7 +601,11 @@ export const ConfigPanel = ({
 
                 {allKeys.map(colKey => (
                     <td key={colKey} className="p-2 border-r text-sm text-right">
-                        {pivotTree.values[colKey]?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                        {(() => {
+                            const valPart = colKey.split('::').pop();
+                            const valueField = values.find(v => v.field === valPart);
+                            return formatValue(pivotTree.values[colKey], valueField?.format);
+                        })()}
                     </td>
                 ))}
 
@@ -550,7 +614,7 @@ export const ConfigPanel = ({
                         const gtKey = columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
                         return (
                             <td key={`gt-total-${v.id}`} className="p-2 border-l text-sm text-right bg-gray-100">
-                                {pivotTree.values[gtKey]?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                                {formatValue(pivotTree.values[gtKey], v.format)}
                             </td>
                         );
                     })
@@ -619,7 +683,7 @@ export const ConfigPanel = ({
     };
 
     return (
-        <div className="flex flex-col h-full bg-white relative">
+        <div className="flex flex-col h-full bg-white relative" >
             <div className="flex items-center justify-between p-4 border-b">
                 <h2 className="text-xl font-semibold">Configuration</h2>
                 <div className="flex gap-2">
@@ -840,13 +904,29 @@ export const ConfigPanel = ({
                                             />
                                         ))}
                                     </SortableContext>
-                                </div>
+                                </div >
 
                                 <div className="border p-3 rounded-md flex-1 bg-green-50/30">
                                     <h3 className="font-medium mb-2 text-sm text-green-800">Columns</h3>
                                     <SortableContext items={columns} strategy={verticalListSortingStrategy}>
                                         {columns.map(col => (
-                                            <SortableItem key={col} id={col} label={col} onRemove={() => toggleField(col, 'col')} />
+                                            <SortableItem
+                                                key={col}
+                                                id={col}
+                                                label={col}
+                                                onRemove={() => toggleField(col, 'col')}
+                                                extraControls={
+                                                    <button
+                                                        onClick={() => updateSort(col, 'alphabetic')}
+                                                        className={`p-1 rounded hover:bg-gray-100 mr-1 ${sortConfigs[col] ? 'text-blue-600' : 'text-gray-400'}`}
+                                                        title="Sort"
+                                                    >
+                                                        {sortConfigs[col]?.direction === 'desc' ? '↓' : '↑'}
+                                                        {sortConfigs[col]?.type === 'manual' && <span className="text-[10px] ml-0.5">M</span>}
+                                                        {sortConfigs[col]?.type === 'value' && <span className="text-[10px] ml-0.5">#</span>}
+                                                    </button>
+                                                }
+                                            />
                                         ))}
                                     </SortableContext>
                                 </div>
@@ -861,31 +941,40 @@ export const ConfigPanel = ({
                                                 label={val.field}
                                                 onRemove={() => toggleField(val.field, 'val')}
                                                 extraControls={
-                                                    <select
-                                                        className="text-xs border rounded p-1 mr-2"
-                                                        value={val.agg}
-                                                        onChange={(e) => {
-                                                            const newValues = values.map(v => v.id === val.id ? { ...v, agg: e.target.value as any } : v);
-                                                            setValues(newValues);
-                                                        }}
-                                                    >
-                                                        <option value="SUM">SUM</option>
-                                                        <option value="AVG">AVG</option>
-                                                        <option value="MIN">MIN</option>
-                                                        <option value="MAX">MAX</option>
-                                                        <option value="COUNT">CNT</option>
-                                                        <option value="COUNTD">CNTD</option>
-                                                    </select>
+                                                    <div className="flex items-center gap-1 mr-2">
+                                                        <button
+                                                            onClick={() => setFormatModal({ isOpen: true, valueId: val.id })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Format Settings"
+                                                        >
+                                                            ⚙️
+                                                        </button>
+                                                        <select
+                                                            className="text-xs border rounded p-1"
+                                                            value={val.agg}
+                                                            onChange={(e) => {
+                                                                const newValues = values.map(v => v.id === val.id ? { ...v, agg: e.target.value as any } : v);
+                                                                setValues(newValues);
+                                                            }}
+                                                        >
+                                                            <option value="SUM">SUM</option>
+                                                            <option value="AVG">AVG</option>
+                                                            <option value="MIN">MIN</option>
+                                                            <option value="MAX">MAX</option>
+                                                            <option value="COUNT">CNT</option>
+                                                            <option value="COUNTD">CNTD</option>
+                                                        </select>
+                                                    </div>
                                                 }
                                             />
                                         ))}
                                     </SortableContext>
                                 </div>
-                            </DndContext>
-                        </div>
-                    </div>
+                            </DndContext >
+                        </div >
+                    </div >
                 )}
-            </div>
+            </div >
 
             {
                 showPreviewModal && (
@@ -977,6 +1066,16 @@ export const ConfigPanel = ({
                 onSave={handleManualSortSave}
             />
 
+            <FormatSettingsModal
+                isOpen={formatModal.isOpen}
+                onClose={() => setFormatModal({ isOpen: false, valueId: null })}
+                initialFormat={values.find(v => v.id === formatModal.valueId)?.format}
+                onSave={(format) => {
+                    setValues(values.map(v => v.id === formatModal.valueId ? { ...v, format } : v));
+                    setFormatModal({ isOpen: false, valueId: null });
+                }}
+            />
+
             <SimpleCalcEditor
                 isOpen={showCalcEditor}
                 onClose={() => { setShowCalcEditor(false); setEditingCalc(null); }}
@@ -1006,5 +1105,96 @@ export const ConfigPanel = ({
                 initialLOD={editingLOD || undefined}
             />
         </div >
+    );
+};
+
+const formatValue = (value: number | undefined, format?: FormatConfig) => {
+    if (value === undefined || value === null) return '-';
+    if (!format) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+    if (format.type === 'percent') {
+        return value.toLocaleString(undefined, { style: 'percent', minimumFractionDigits: format.decimals, maximumFractionDigits: format.decimals });
+    }
+
+    let formatted = value.toLocaleString(undefined, { minimumFractionDigits: format.decimals, maximumFractionDigits: format.decimals });
+
+    if (format.type === 'currency') {
+        return `${format.symbol || '$'}${formatted}`;
+    }
+
+    return formatted;
+};
+
+const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpen: boolean, onClose: () => void, onSave: (format: FormatConfig) => void, initialFormat?: FormatConfig }) => {
+    const [type, setType] = useState<'number' | 'currency' | 'percent'>(initialFormat?.type || 'number');
+    const [decimals, setDecimals] = useState(initialFormat?.decimals ?? 2);
+    const [symbol, setSymbol] = useState(initialFormat?.symbol || '$');
+
+    useEffect(() => {
+        if (isOpen) {
+            setType(initialFormat?.type || 'number');
+            setDecimals(initialFormat?.decimals ?? 2);
+            setSymbol(initialFormat?.symbol || '$');
+        }
+    }, [isOpen, initialFormat]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center">
+            <div className="bg-white p-4 rounded-lg shadow-xl w-80">
+                <h3 className="font-semibold mb-4">Format Settings</h3>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <select
+                            value={type}
+                            onChange={(e) => setType(e.target.value as any)}
+                            className="w-full border rounded p-2 text-sm"
+                        >
+                            <option value="number">Number</option>
+                            <option value="currency">Currency</option>
+                            <option value="percent">Percentage</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Decimals</label>
+                        <input
+                            type="number"
+                            min="0"
+                            max="10"
+                            value={decimals}
+                            onChange={(e) => setDecimals(parseInt(e.target.value))}
+                            className="w-full border rounded p-2 text-sm"
+                        />
+                    </div>
+
+                    {type === 'currency' && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Symbol</label>
+                            <input
+                                type="text"
+                                value={symbol}
+                                onChange={(e) => setSymbol(e.target.value)}
+                                className="w-full border rounded p-2 text-sm"
+                                placeholder="$"
+                            />
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex justify-end gap-2 mt-6">
+                    <button onClick={onClose} className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button
+                        onClick={() => onSave({ type, decimals, symbol })}
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                        Apply
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 };
