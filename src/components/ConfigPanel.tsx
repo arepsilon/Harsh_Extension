@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig } from '../types';
+import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat } from '../types';
 import { PivotEngine } from '../engine/PivotEngine';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -10,6 +10,7 @@ import { ManualSortModal } from './ManualSortModal';
 import { SimpleCalcEditor } from './SimpleCalcEditor';
 import { TableCalcEditor } from './TableCalcEditor';
 import { LODCalcEditor } from './LODCalcEditor';
+import { ConditionalFormatModal } from './ConditionalFormatModal';
 import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
@@ -53,6 +54,7 @@ export const ConfigPanel = ({
     const [manualSortOrders, setManualSortOrders] = useState<Record<string, string[]>>({});
     const [rowFormats, setRowFormats] = useState<Record<string, FormatConfig>>({});
     const [columnFormats, setColumnFormats] = useState<Record<string, FormatConfig>>({});
+    const [conditionalFormats, setConditionalFormats] = useState<ConditionalFormat[]>([]);
 
     const [manualSortModal, setManualSortModal] = useState<{ isOpen: boolean, field: string | null }>({
         isOpen: false,
@@ -77,6 +79,12 @@ export const ConfigPanel = ({
         columnField: string | null;
         type: 'value' | 'row' | 'column';
     }>({ isOpen: false, valueId: null, rowField: null, columnField: null, type: 'value' });
+
+    const [conditionalFormatModal, setConditionalFormatModal] = useState<{
+        isOpen: boolean;
+        fieldName: string | null;
+        fieldType: 'row' | 'column' | 'value';
+    }>({ isOpen: false, fieldName: null, fieldType: 'value' });
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -112,6 +120,7 @@ export const ConfigPanel = ({
                         if (savedConfig.lodCalculations) setLodCalculations(savedConfig.lodCalculations);
                         if (savedConfig.rowFormats) setRowFormats(savedConfig.rowFormats);
                         if (savedConfig.columnFormats) setColumnFormats(savedConfig.columnFormats);
+                        if (savedConfig.conditionalFormats) setConditionalFormats(savedConfig.conditionalFormats);
 
                         if (savedConfig.showGrandTotals !== undefined) setShowColumnGrandTotals(savedConfig.showGrandTotals);
                     }
@@ -185,7 +194,8 @@ export const ConfigPanel = ({
                 tableCalculations,
                 lodCalculations,
                 rowFormats,
-                columnFormats
+                columnFormats,
+                conditionalFormats
             };
             // @ts-ignore
             if (window.tableau) {
@@ -585,8 +595,17 @@ export const ConfigPanel = ({
                                     ? formatValue(content, rowFormats[rowField])
                                     : content;
 
+                                const conditionalStyle = evaluateConditionalFormat(content, rowField, conditionalFormats);
+
                                 return (
-                                    <td key={index} className="p-2 border-b border-r text-sm truncate">
+                                    <td
+                                        key={index}
+                                        className="p-2 border-b border-r text-sm truncate"
+                                        style={{
+                                            color: conditionalStyle.fontColor,
+                                            backgroundColor: conditionalStyle.backgroundColor
+                                        }}
+                                    >
                                         {formattedContent}
                                     </td>
                                 );
@@ -605,13 +624,31 @@ export const ConfigPanel = ({
 
                             {allKeys.map(colKey => {
                                 const val = child.values[colKey];
+                                const valPart = colKey.split('::').pop();
+                                const valueField = values.find(v => v.field === valPart);
+
+                                // Build compare values for field comparison
+                                const compareValues: Record<string, number> = {};
+                                values.forEach(v => {
+                                    const vKey = colKey.split('::')[0] ? `${colKey.split('::')[0]}::${v.field}` : v.field;
+                                    const vVal = child.values[vKey];
+                                    if (vVal !== undefined) compareValues[v.field] = vVal;
+                                });
+
+                                const conditionalStyle = valueField
+                                    ? evaluateConditionalFormat(val, valueField.field, conditionalFormats, compareValues)
+                                    : {};
+
                                 return (
-                                    <td key={colKey} className="p-2 border-b text-sm text-right font-mono">
-                                        {(() => {
-                                            const valPart = colKey.split('::').pop();
-                                            const valueField = values.find(v => v.field === valPart);
-                                            return formatValue(val, valueField?.format);
-                                        })()}
+                                    <td
+                                        key={colKey}
+                                        className="p-2 border-b text-sm text-right font-mono"
+                                        style={{
+                                            color: conditionalStyle.fontColor,
+                                            backgroundColor: conditionalStyle.backgroundColor
+                                        }}
+                                    >
+                                        {formatValue(val, valueField?.format)}
                                     </td>
                                 );
                             })}
@@ -702,15 +739,27 @@ export const ConfigPanel = ({
                                         </th>
                                     )}
 
-                                    {levelHeaders.map((header, hIndex) => (
-                                        <th
-                                            key={hIndex}
-                                            colSpan={header.span}
-                                            className="p-2 border-r text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-                                        >
-                                            {header.formattedLabel || header.label}
-                                        </th>
-                                    ))}
+                                    {levelHeaders.map((header, hIndex) => {
+                                        // Determine which column field this header belongs to
+                                        const columnField = levelIndex < columns.length ? columns[levelIndex] : null;
+                                        const conditionalStyle = columnField
+                                            ? evaluateConditionalFormat(header.label, columnField, conditionalFormats)
+                                            : {};
+
+                                        return (
+                                            <th
+                                                key={hIndex}
+                                                colSpan={header.span}
+                                                className="p-2 border-r text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                                                style={{
+                                                    color: conditionalStyle.fontColor,
+                                                    backgroundColor: conditionalStyle.backgroundColor
+                                                }}
+                                            >
+                                                {header.formattedLabel || header.label}
+                                            </th>
+                                        );
+                                    })}
 
                                     {levelIndex === 0 && showRowGrandTotals && rowGrandTotalsPosition === 'right' && (
                                         <th
@@ -953,6 +1002,13 @@ export const ConfigPanel = ({
                                                             ⚙️
                                                         </button>
                                                         <button
+                                                            onClick={() => setConditionalFormatModal({ isOpen: true, fieldName: row, fieldType: 'row' })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Conditional Formatting"
+                                                        >
+                                                            🎨
+                                                        </button>
+                                                        <button
                                                             onClick={() => updateSort(row, 'alphabetic')}
                                                             className={`text-xs px-1 rounded border ${sortConfigs[row]?.type === 'alphabetic' ? 'bg-blue-200 border-blue-400' : 'bg-white'}`}
                                                             title="Sort A-Z"
@@ -1004,6 +1060,13 @@ export const ConfigPanel = ({
                                                             ⚙️
                                                         </button>
                                                         <button
+                                                            onClick={() => setConditionalFormatModal({ isOpen: true, fieldName: col, fieldType: 'column' })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Conditional Formatting"
+                                                        >
+                                                            🎨
+                                                        </button>
+                                                        <button
                                                             onClick={() => updateSort(col, 'alphabetic')}
                                                             className={`text-xs px-1 rounded border ${sortConfigs[col]?.type === 'alphabetic' ? 'bg-blue-200 border-blue-400' : 'bg-white'}`}
                                                             title="Sort A-Z"
@@ -1053,6 +1116,13 @@ export const ConfigPanel = ({
                                                             title="Format Settings"
                                                         >
                                                             ⚙️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setConditionalFormatModal({ isOpen: true, fieldName: val.field, fieldType: 'value' })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Conditional Formatting"
+                                                        >
+                                                            🎨
                                                         </button>
                                                         <select
                                                             className="text-xs border rounded p-1"
@@ -1221,8 +1291,94 @@ export const ConfigPanel = ({
                 availableFields={summaryData?.columns.map(c => c.fieldName) || []}
                 initialLOD={editingLOD || undefined}
             />
+
+            <ConditionalFormatModal
+                isOpen={conditionalFormatModal.isOpen}
+                onClose={() => setConditionalFormatModal({ isOpen: false, fieldName: null, fieldType: 'value' })}
+                fieldName={conditionalFormatModal.fieldName || ''}
+                fieldType={conditionalFormatModal.fieldType}
+                initialRules={conditionalFormats.find(cf => cf.fieldName === conditionalFormatModal.fieldName)?.rules || []}
+                availableFields={summaryData?.columns.map(c => c.fieldName) || []}
+                valueFields={values}
+                onSave={(rules) => {
+                    if (conditionalFormatModal.fieldName) {
+                        setConditionalFormats(prev => {
+                            const existing = prev.filter(cf => cf.fieldName !== conditionalFormatModal.fieldName);
+                            if (rules.length > 0) {
+                                return [...existing, { fieldName: conditionalFormatModal.fieldName!, rules }];
+                            }
+                            return existing;
+                        });
+                    }
+                }}
+            />
         </div >
     );
+};
+
+const evaluateConditionalFormat = (
+    value: number | string | undefined,
+    fieldName: string,
+    conditionalFormats: ConditionalFormat[],
+    compareValues?: Record<string, number>
+): { fontColor?: string; backgroundColor?: string } => {
+    if (value === undefined || value === null) return {};
+
+    const fieldFormat = conditionalFormats.find(cf => cf.fieldName === fieldName);
+    if (!fieldFormat || fieldFormat.rules.length === 0) return {};
+
+    // Evaluate rules in order, first matching rule wins
+    for (const rule of fieldFormat.rules) {
+        let matches = false;
+
+        if (rule.condition === 'compare_field' && rule.compareField && compareValues) {
+            const compareValue = compareValues[rule.compareField];
+            if (compareValue !== undefined) {
+                const numValue = typeof value === 'number' ? value : parseFloat(String(value));
+                if (!isNaN(numValue)) {
+                    matches = numValue > compareValue;
+                }
+            }
+        } else {
+            const ruleValue = rule.value;
+            if (ruleValue !== undefined) {
+                if (typeof value === 'number' || !isNaN(Number(value))) {
+                    const numValue = typeof value === 'number' ? value : parseFloat(String(value));
+                    const numRuleValue = typeof ruleValue === 'number' ? ruleValue : parseFloat(String(ruleValue));
+
+                    if (!isNaN(numValue) && !isNaN(numRuleValue)) {
+                        switch (rule.condition) {
+                            case 'gt': matches = numValue > numRuleValue; break;
+                            case 'gte': matches = numValue >= numRuleValue; break;
+                            case 'lt': matches = numValue < numRuleValue; break;
+                            case 'lte': matches = numValue <= numRuleValue; break;
+                            case 'eq': matches = numValue === numRuleValue; break;
+                            case 'neq': matches = numValue !== numRuleValue; break;
+                        }
+                    }
+                } else {
+                    const strValue = String(value).toLowerCase();
+                    const strRuleValue = String(ruleValue).toLowerCase();
+
+                    switch (rule.condition) {
+                        case 'eq': matches = strValue === strRuleValue; break;
+                        case 'neq': matches = strValue !== strRuleValue; break;
+                        case 'contains': matches = strValue.includes(strRuleValue); break;
+                        case 'not_contains': matches = !strValue.includes(strRuleValue); break;
+                    }
+                }
+            }
+        }
+
+        if (matches) {
+            return {
+                fontColor: rule.fontColor,
+                backgroundColor: rule.backgroundColor
+            };
+        }
+    }
+
+    return {};
 };
 
 const formatValue = (value: number | string | undefined, format?: FormatConfig) => {
