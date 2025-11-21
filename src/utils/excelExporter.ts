@@ -2,6 +2,8 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import type { PivotNode, PivotConfig, HeaderRow, ConditionalFormat, FormatConfig, TableauDataTable } from '../types';
 
+export type TableStyle = 'classic' | 'professional_blue' | 'green_accent' | 'orange_warm' | 'purple_modern';
+
 interface ExportOptions {
     pivotTree: PivotNode | null;
     config: PivotConfig;
@@ -16,6 +18,55 @@ interface ExportOptions {
     columnFormats?: Record<string, FormatConfig>;
     appliedFilters?: Record<string, { values: string[], isAll: boolean }>;
     summaryData?: TableauDataTable | null;
+    tableStyle?: TableStyle;
+}
+
+interface StyleConfig {
+    headerBg: string;
+    headerFont: string;
+    alternateRowBg: string;
+    borderColor: string;
+}
+
+function getStyleConfig(style: TableStyle): StyleConfig {
+    switch (style) {
+        case 'professional_blue':
+            return {
+                headerBg: 'FF1F4E78',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFDEEAF6',
+                borderColor: 'FF8EA9DB'
+            };
+        case 'green_accent':
+            return {
+                headerBg: 'FF2E7D32',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFE8F5E9',
+                borderColor: 'FF81C784'
+            };
+        case 'orange_warm':
+            return {
+                headerBg: 'FFE65100',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFFFF3E0',
+                borderColor: 'FFFFB74D'
+            };
+        case 'purple_modern':
+            return {
+                headerBg: 'FF6A1B9A',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFF3E5F5',
+                borderColor: 'FFCE93D8'
+            };
+        case 'classic':
+        default:
+            return {
+                headerBg: 'FFF3F4F6',
+                headerFont: 'FF000000',
+                alternateRowBg: 'FFFFFFFF',
+                borderColor: 'FFD1D5DB'
+            };
+    }
 }
 
 export const exportToExcel = async (options: ExportOptions) => {
@@ -32,10 +83,15 @@ export const exportToExcel = async (options: ExportOptions) => {
         rowFormats = {},
         columnFormats = {},
         appliedFilters = {},
-        summaryData = null
+        summaryData = null,
+        tableStyle = 'classic'
     } = options;
 
     if (!pivotTree) return;
+
+    const styleConfig = getStyleConfig(tableStyle);
+    // TODO: Apply styleConfig to table headers, rows, and borders
+    void styleConfig;
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pivot Table');
@@ -100,19 +156,19 @@ export const exportToExcel = async (options: ExportOptions) => {
 
         if (format.type === 'percent') {
             const decimals = format.decimals ?? 2;
-            const numFmt = `0.${'0'.repeat(decimals)}%`;
+            const numFmt = decimals > 0 ? `0.${'0'.repeat(decimals)}%` : `0%`;
             return { value: numValue, numFmt };
         }
 
         if (format.type === 'currency') {
             const decimals = format.decimals ?? 2;
             const symbol = format.symbol || '$';
-            const numFmt = `${symbol}#,##0.${'0'.repeat(decimals)}`;
+            const numFmt = decimals > 0 ? `${symbol}#,##0.${'0'.repeat(decimals)}` : `${symbol}#,##0`;
             return { value: numValue, numFmt };
         }
 
         const decimals = format.decimals ?? 2;
-        const numFmt = `#,##0.${'0'.repeat(decimals)}`;
+        const numFmt = decimals > 0 ? `#,##0.${'0'.repeat(decimals)}` : `#,##0`;
         return { value: numValue, numFmt };
     };
 
