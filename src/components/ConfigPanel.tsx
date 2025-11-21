@@ -958,15 +958,21 @@ export const ConfigPanel = ({
                         Preview Table
                     </button>
                     <button
-                        onClick={() => exportToExcel(
+                        onClick={() => exportToExcel({
                             pivotTree,
-                            { rows, columns, values, calculatedFields, tableCalculations },
+                            config: { rows, columns, values, calculatedFields, tableCalculations, lodCalculations },
                             showColumnGrandTotals,
                             columnGrandTotalsPosition,
                             showRowGrandTotals,
                             rowGrandTotalsPosition,
-                            selectedWorksheet?.name || 'Export'
-                        )}
+                            worksheetName: selectedWorksheet?.name || 'Export',
+                            headerRows,
+                            conditionalFormats,
+                            rowFormats,
+                            columnFormats,
+                            appliedFilters,
+                            summaryData
+                        })}
                         className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-medium"
                         disabled={!pivotTree}
                     >
