@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat } from '../types';
+import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat, HeaderRow } from '../types';
 import { PivotEngine } from '../engine/PivotEngine';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -11,6 +11,7 @@ import { SimpleCalcEditor } from './SimpleCalcEditor';
 import { TableCalcEditor } from './TableCalcEditor';
 import { LODCalcEditor } from './LODCalcEditor';
 import { ConditionalFormatModal } from './ConditionalFormatModal';
+import { HeaderRowEditor } from './HeaderRowEditor';
 import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
@@ -55,6 +56,7 @@ export const ConfigPanel = ({
     const [rowFormats, setRowFormats] = useState<Record<string, FormatConfig>>({});
     const [columnFormats, setColumnFormats] = useState<Record<string, FormatConfig>>({});
     const [conditionalFormats, setConditionalFormats] = useState<ConditionalFormat[]>([]);
+    const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
 
     const [manualSortModal, setManualSortModal] = useState<{ isOpen: boolean, field: string | null }>({
         isOpen: false,
@@ -85,6 +87,14 @@ export const ConfigPanel = ({
         fieldName: string | null;
         fieldType: 'row' | 'column' | 'value';
     }>({ isOpen: false, fieldName: null, fieldType: 'value' });
+
+    const [headerRowModal, setHeaderRowModal] = useState<{
+        isOpen: boolean;
+        editingHeaderRow: HeaderRow | null;
+    }>({ isOpen: false, editingHeaderRow: null });
+
+    // TODO: Complete header row UI integration (in progress)
+    void HeaderRowEditor; void headerRowModal; void setHeaderRowModal;
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -121,6 +131,7 @@ export const ConfigPanel = ({
                         if (savedConfig.rowFormats) setRowFormats(savedConfig.rowFormats);
                         if (savedConfig.columnFormats) setColumnFormats(savedConfig.columnFormats);
                         if (savedConfig.conditionalFormats) setConditionalFormats(savedConfig.conditionalFormats);
+                        if (savedConfig.headerRows) setHeaderRows(savedConfig.headerRows);
 
                         if (savedConfig.showGrandTotals !== undefined) setShowColumnGrandTotals(savedConfig.showGrandTotals);
                     }
@@ -195,7 +206,8 @@ export const ConfigPanel = ({
                 lodCalculations,
                 rowFormats,
                 columnFormats,
-                conditionalFormats
+                conditionalFormats,
+                headerRows
             };
             // @ts-ignore
             if (window.tableau) {
@@ -1458,13 +1470,24 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
     const [decimals, setDecimals] = useState(initialFormat?.decimals ?? 2);
     const [symbol, setSymbol] = useState(initialFormat?.symbol || '$');
     const [dateFormat, setDateFormat] = useState(initialFormat?.dateFormat || 'MM/DD/YYYY');
+    const [useCustomDateFormat, setUseCustomDateFormat] = useState(false);
+
+    const presetFormats = {
+        date: ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY', 'MMM DD, YYYY'],
+        datetime: ['MM/DD/YYYY HH:mm:ss', 'DD/MM/YYYY HH:mm:ss', 'YYYY-MM-DD HH:mm:ss', 'MM/DD/YYYY hh:mm:ss A']
+    };
 
     useEffect(() => {
         if (isOpen) {
             setType(initialFormat?.type || 'number');
             setDecimals(initialFormat?.decimals ?? 2);
             setSymbol(initialFormat?.symbol || '$');
-            setDateFormat(initialFormat?.dateFormat || (initialFormat?.type === 'datetime' ? 'MM/DD/YYYY HH:mm:ss' : 'MM/DD/YYYY'));
+            const initFormat = initialFormat?.dateFormat || (initialFormat?.type === 'datetime' ? 'MM/DD/YYYY HH:mm:ss' : 'MM/DD/YYYY');
+            setDateFormat(initFormat);
+
+            // Check if the initial format is a custom format
+            const allPresets = [...(presetFormats.date || []), ...(presetFormats.datetime || [])];
+            setUseCustomDateFormat(!allPresets.includes(initFormat));
         }
     }, [isOpen, initialFormat]);
 
@@ -1519,29 +1542,43 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
                     )}
 
                     {(type === 'date' || type === 'datetime') && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Date Format</label>
-                            <select
-                                value={dateFormat}
-                                onChange={(e) => setDateFormat(e.target.value)}
-                                className="w-full border rounded p-2 text-sm"
-                            >
-                                <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                                <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                                <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                                <option value="DD-MM-YYYY">DD-MM-YYYY</option>
-                                <option value="MMM DD, YYYY">MMM DD, YYYY</option>
-                                {type === 'datetime' && (
-                                    <>
-                                        <option value="MM/DD/YYYY HH:mm:ss">MM/DD/YYYY HH:mm:ss</option>
-                                        <option value="DD/MM/YYYY HH:mm:ss">DD/MM/YYYY HH:mm:ss</option>
-                                        <option value="YYYY-MM-DD HH:mm:ss">YYYY-MM-DD HH:mm:ss</option>
-                                        <option value="MM/DD/YYYY hh:mm:ss A">MM/DD/YYYY hh:mm:ss A</option>
-                                    </>
-                                )}
-                            </select>
-                            <p className="text-xs text-gray-500 mt-1">
-                                Format tokens: YYYY (year), MM (month), DD (day), HH (24h), hh (12h), mm (min), ss (sec), A (AM/PM)
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="block text-sm font-medium text-gray-700">Date Format</label>
+                                <button
+                                    type="button"
+                                    onClick={() => setUseCustomDateFormat(!useCustomDateFormat)}
+                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                >
+                                    {useCustomDateFormat ? 'Use Preset' : 'Custom Format'}
+                                </button>
+                            </div>
+
+                            {!useCustomDateFormat ? (
+                                <select
+                                    value={dateFormat}
+                                    onChange={(e) => setDateFormat(e.target.value)}
+                                    className="w-full border rounded p-2 text-sm"
+                                >
+                                    {(type === 'date' ? presetFormats.date : presetFormats.datetime).map(fmt => (
+                                        <option key={fmt} value={fmt}>{fmt}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={dateFormat}
+                                    onChange={(e) => setDateFormat(e.target.value)}
+                                    className="w-full border rounded p-2 text-sm font-mono"
+                                    placeholder="e.g., YYYY/MM/DD"
+                                />
+                            )}
+
+                            <p className="text-xs text-gray-500">
+                                <strong>Tokens:</strong> YYYY (year), MM (month), DD (day), HH (24h), hh (12h), mm (min), ss (sec), A (AM/PM)
+                            </p>
+                            <p className="text-xs text-gray-400 italic">
+                                Example: "YYYY/MM/DD - HH:mm" → "2024/12/25 - 14:30"
                             </p>
                         </div>
                     )}

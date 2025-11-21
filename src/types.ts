@@ -117,6 +117,20 @@ export interface ConditionalFormat {
     rules: ConditionalFormatRule[];
 }
 
+export interface HeaderRow {
+    id: string;
+    type: 'title' | 'filters' | 'custom_field' | 'refresh_date';
+    // For title type
+    titleText?: string;
+    titleField?: string;
+    // For filters type
+    selectedFilters?: string[];  // Field names of filters to show
+    // For custom_field type
+    customField?: string;
+    // For refresh_date type
+    refreshDateFormat?: string;
+}
+
 export interface ValueField {
     id: string;
     field: string;
