@@ -25,19 +25,10 @@ export interface TableauLogicalTable {
     caption: string;
 }
 
-export interface FieldMetadata {
-    fieldName: string;
-    dataType: string;
-    id?: string; // Column ID for selective fetching
-}
-
 export interface TableauDataTable {
     columns: TableauColumn[];
     data: TableauDataRow[];
     totalRowCount: number;
-    isLimited?: boolean; // Whether data was limited for performance
-    actualTotalRowCount?: number; // Actual total rows in data source
-    fetchedFields?: string[]; // Which fields were actually fetched
 }
 
 export interface TableauColumn {
