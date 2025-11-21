@@ -97,9 +97,10 @@ export interface LODCalculation {
 }
 
 export interface FormatConfig {
-    type: 'number' | 'currency' | 'percent';
-    decimals: number;
+    type: 'number' | 'currency' | 'percent' | 'date' | 'datetime';
+    decimals?: number;
     symbol?: string;
+    dateFormat?: string;  // e.g., 'MM/DD/YYYY', 'DD-MM-YYYY', 'YYYY-MM-DD'
 }
 
 export interface ValueField {
