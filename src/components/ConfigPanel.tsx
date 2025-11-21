@@ -51,6 +51,8 @@ export const ConfigPanel = ({
 
     const [sortConfigs, setSortConfigs] = useState<Record<string, SortConfig>>({});
     const [manualSortOrders, setManualSortOrders] = useState<Record<string, string[]>>({});
+    const [rowFormats, setRowFormats] = useState<Record<string, FormatConfig>>({});
+    const [columnFormats, setColumnFormats] = useState<Record<string, FormatConfig>>({});
 
     const [manualSortModal, setManualSortModal] = useState<{ isOpen: boolean, field: string | null }>({
         isOpen: false,
@@ -68,7 +70,13 @@ export const ConfigPanel = ({
     const [lodCalculations, setLodCalculations] = useState<LODCalculation[]>([]);
     const [showLODEditor, setShowLODEditor] = useState(false);
     const [editingLOD, setEditingLOD] = useState<LODCalculation | null>(null);
-    const [formatModal, setFormatModal] = useState<{ isOpen: boolean, valueId: string | null }>({ isOpen: false, valueId: null });
+    const [formatModal, setFormatModal] = useState<{
+        isOpen: boolean;
+        valueId: string | null;
+        rowField: string | null;
+        columnField: string | null;
+        type: 'value' | 'row' | 'column';
+    }>({ isOpen: false, valueId: null, rowField: null, columnField: null, type: 'value' });
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -102,6 +110,8 @@ export const ConfigPanel = ({
                         if (savedConfig.calculatedFields) setCalculatedFields(savedConfig.calculatedFields);
                         if (savedConfig.tableCalculations) setTableCalculations(savedConfig.tableCalculations);
                         if (savedConfig.lodCalculations) setLodCalculations(savedConfig.lodCalculations);
+                        if (savedConfig.rowFormats) setRowFormats(savedConfig.rowFormats);
+                        if (savedConfig.columnFormats) setColumnFormats(savedConfig.columnFormats);
 
                         if (savedConfig.showGrandTotals !== undefined) setShowColumnGrandTotals(savedConfig.showGrandTotals);
                     }
@@ -173,7 +183,9 @@ export const ConfigPanel = ({
                 manualSortOrders,
                 calculatedFields,
                 tableCalculations,
-                lodCalculations
+                lodCalculations,
+                rowFormats,
+                columnFormats
             };
             // @ts-ignore
             if (window.tableau) {
@@ -382,6 +394,33 @@ export const ConfigPanel = ({
             });
         }
 
+        // Helper function for data-type-aware comparison
+        const compareByDataType = (valA: string, valB: string, fieldName: string): number => {
+            const fieldInfo = availableColumns.find(col => col.fieldName === fieldName);
+            const dataType = fieldInfo?.dataType;
+
+            // Handle date/datetime types
+            if (dataType === 'date' || dataType === 'date-time') {
+                const dateA = new Date(valA);
+                const dateB = new Date(valB);
+                if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+                    return dateA.getTime() - dateB.getTime();
+                }
+            }
+
+            // Handle numeric types
+            if (dataType === 'int' || dataType === 'float') {
+                const numA = parseFloat(valA);
+                const numB = parseFloat(valB);
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return numA - numB;
+                }
+            }
+
+            // Default to string comparison with numeric awareness
+            return valA.localeCompare(valB, undefined, { numeric: true });
+        };
+
         // 2. Sort Keys
         allKeys.sort((a, b) => {
             const [colPartA, valPartA] = a.split('::');
@@ -407,13 +446,13 @@ export const ConfigPanel = ({
                     if (indexA !== -1 && indexB !== -1) comparison = indexA - indexB;
                     else if (indexA !== -1) comparison = -1;
                     else if (indexB !== -1) comparison = 1;
-                    else comparison = valA.localeCompare(valB, undefined, { numeric: true });
+                    else comparison = compareByDataType(valA, valB, colField);
                 } else if (sortConfig?.type === 'value' && sortConfig.field) {
                     const totalA = columnTotals[`${i}`]?.[valA]?.[sortConfig.field] || 0;
                     const totalB = columnTotals[`${i}`]?.[valB]?.[sortConfig.field] || 0;
                     comparison = totalA - totalB;
                 } else {
-                    comparison = valA.localeCompare(valB, undefined, { numeric: true });
+                    comparison = compareByDataType(valA, valB, colField);
                 }
 
                 return sortConfig?.direction === 'desc' ? -comparison : comparison;
@@ -425,12 +464,12 @@ export const ConfigPanel = ({
             return indexA - indexB;
         });
 
-        const headerLevels: { label: string, span: number }[][] = [];
+        const headerLevels: { label: string, span: number, formattedLabel?: string }[][] = [];
         const totalLevels = columns.length + 1;
 
         if (allKeys.length > 0) {
             for (let level = 0; level < totalLevels; level++) {
-                const currentLevelHeaders: { label: string, span: number }[] = [];
+                const currentLevelHeaders: { label: string, span: number, formattedLabel?: string }[] = [];
                 let lastLabel: string | null = null;
                 let currentSpan = 0;
 
@@ -462,14 +501,24 @@ export const ConfigPanel = ({
                         currentSpan++;
                     } else {
                         if (lastLabel !== null) {
-                            currentLevelHeaders.push({ label: lastLabel, span: currentSpan });
+                            // Apply formatting if this is a column level (not the value level)
+                            const columnField = level < columns.length ? columns[level] : null;
+                            const formattedLabel = columnField && columnFormats[columnField]
+                                ? formatValue(lastLabel, columnFormats[columnField])
+                                : lastLabel;
+                            currentLevelHeaders.push({ label: lastLabel, span: currentSpan, formattedLabel });
                         }
                         lastLabel = label;
                         currentSpan = 1;
                     }
                 });
                 if (lastLabel !== null) {
-                    currentLevelHeaders.push({ label: lastLabel, span: currentSpan });
+                    // Apply formatting if this is a column level (not the value level)
+                    const columnField = level < columns.length ? columns[level] : null;
+                    const formattedLabel = columnField && columnFormats[columnField]
+                        ? formatValue(lastLabel, columnFormats[columnField])
+                        : lastLabel;
+                    currentLevelHeaders.push({ label: lastLabel, span: currentSpan, formattedLabel });
                 }
                 headerLevels.push(currentLevelHeaders);
             }
@@ -505,7 +554,7 @@ export const ConfigPanel = ({
                         comparison = 1;
                     }
                     else {
-                        comparison = keyA.localeCompare(keyB, undefined, { numeric: true });
+                        comparison = compareByDataType(keyA, keyB, currentRowField);
                     }
                 } else if (sortConfig?.type === 'value' && sortConfig.field) {
                     const valKey = columns.length > 0 ? `__grand_total__::${sortConfig.field}` : sortConfig.field;
@@ -513,7 +562,7 @@ export const ConfigPanel = ({
                     const valB = nodeB.values[valKey] || 0;
                     comparison = valA - valB;
                 } else {
-                    comparison = keyA.localeCompare(keyB, undefined, { numeric: true });
+                    comparison = compareByDataType(keyA, keyB, currentRowField);
                 }
 
                 return sortConfig?.direction === 'desc' ? -comparison : comparison;
@@ -526,15 +575,19 @@ export const ConfigPanel = ({
                 if (showRow) {
                     const rowCells = (
                         <>
-                            {rows.map((_, index) => {
-                                let content = '';
+                            {rows.map((rowField, index) => {
+                                let content: string | number = '';
                                 if (index < depth) content = path[index];
                                 else if (index === depth) content = key;
                                 else content = isLeaf ? '' : 'Total';
 
+                                const formattedContent = content && rowFormats[rowField]
+                                    ? formatValue(content, rowFormats[rowField])
+                                    : content;
+
                                 return (
                                     <td key={index} className="p-2 border-b border-r text-sm truncate">
-                                        {content}
+                                        {formattedContent}
                                     </td>
                                 );
                             })}
@@ -655,7 +708,7 @@ export const ConfigPanel = ({
                                             colSpan={header.span}
                                             className="p-2 border-r text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
                                         >
-                                            {header.label}
+                                            {header.formattedLabel || header.label}
                                         </th>
                                     ))}
 
@@ -779,21 +832,40 @@ export const ConfigPanel = ({
                                             <div className="flex items-center gap-1">
                                                 <span className="text-[10px] text-gray-400 bg-gray-100 px-1 rounded uppercase">{col.dataType}</span>
                                                 {col.isCalculated && (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (col.dataType === 'lod') {
-                                                                const lod = lodCalculations.find(l => l.name === col.fieldName);
-                                                                if (lod) handleEditLODCalculation(lod);
-                                                            } else {
-                                                                const calc = calculatedFields.find(c => c.name === col.fieldName);
-                                                                if (calc) handleEditCalculation(calc);
-                                                            }
-                                                        }}
-                                                        className="text-xs text-gray-400 hover:text-blue-600"
-                                                        title="Edit Calculation"
-                                                    >
-                                                        ✎
-                                                    </button>
+                                                    <>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (col.dataType === 'lod') {
+                                                                    const lod = lodCalculations.find(l => l.name === col.fieldName);
+                                                                    if (lod) handleEditLODCalculation(lod);
+                                                                } else {
+                                                                    const calc = calculatedFields.find(c => c.name === col.fieldName);
+                                                                    if (calc) handleEditCalculation(calc);
+                                                                }
+                                                            }}
+                                                            className="text-xs text-gray-400 hover:text-blue-600"
+                                                            title="Edit Calculation"
+                                                        >
+                                                            ✎
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (col.dataType === 'lod') {
+                                                                    setLodCalculations(prev => prev.filter(l => l.name !== col.fieldName));
+                                                                } else {
+                                                                    setCalculatedFields(prev => prev.filter(c => c.name !== col.fieldName));
+                                                                }
+                                                                // Also remove from rows, columns, and values
+                                                                setRows(rows.filter(r => r !== col.fieldName));
+                                                                setColumns(columns.filter(c => c !== col.fieldName));
+                                                                setValues(values.filter(v => v.field !== col.fieldName));
+                                                            }}
+                                                            className="text-xs text-gray-400 hover:text-red-600"
+                                                            title="Delete Calculation"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    </>
                                                 )}
                                             </div>
                                         </div>
@@ -874,6 +946,13 @@ export const ConfigPanel = ({
                                                 extraControls={
                                                     <div className="flex items-center gap-1 mr-2">
                                                         <button
+                                                            onClick={() => setFormatModal({ isOpen: true, valueId: null, rowField: row, columnField: null, type: 'row' })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Format Settings"
+                                                        >
+                                                            ⚙️
+                                                        </button>
+                                                        <button
                                                             onClick={() => updateSort(row, 'alphabetic')}
                                                             className={`text-xs px-1 rounded border ${sortConfigs[row]?.type === 'alphabetic' ? 'bg-blue-200 border-blue-400' : 'bg-white'}`}
                                                             title="Sort A-Z"
@@ -916,15 +995,41 @@ export const ConfigPanel = ({
                                                 label={col}
                                                 onRemove={() => toggleField(col, 'col')}
                                                 extraControls={
-                                                    <button
-                                                        onClick={() => updateSort(col, 'alphabetic')}
-                                                        className={`p-1 rounded hover:bg-gray-100 mr-1 ${sortConfigs[col] ? 'text-blue-600' : 'text-gray-400'}`}
-                                                        title="Sort"
-                                                    >
-                                                        {sortConfigs[col]?.direction === 'desc' ? '↓' : '↑'}
-                                                        {sortConfigs[col]?.type === 'manual' && <span className="text-[10px] ml-0.5">M</span>}
-                                                        {sortConfigs[col]?.type === 'value' && <span className="text-[10px] ml-0.5">#</span>}
-                                                    </button>
+                                                    <div className="flex items-center gap-1 mr-2">
+                                                        <button
+                                                            onClick={() => setFormatModal({ isOpen: true, valueId: null, rowField: null, columnField: col, type: 'column' })}
+                                                            className="p-1 hover:bg-gray-200 rounded text-gray-500"
+                                                            title="Format Settings"
+                                                        >
+                                                            ⚙️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => updateSort(col, 'alphabetic')}
+                                                            className={`text-xs px-1 rounded border ${sortConfigs[col]?.type === 'alphabetic' ? 'bg-blue-200 border-blue-400' : 'bg-white'}`}
+                                                            title="Sort A-Z"
+                                                        >
+                                                            {sortConfigs[col]?.type === 'alphabetic' && sortConfigs[col].direction === 'desc' ? 'Z-A' : 'A-Z'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => updateSort(col, 'manual')}
+                                                            className={`text-xs px-1 rounded border ${sortConfigs[col]?.type === 'manual' ? 'bg-blue-200 border-blue-400' : 'bg-white'}`}
+                                                            title="Manual Sort"
+                                                        >
+                                                            Man
+                                                        </button>
+                                                        {values.length > 0 && (
+                                                            <select
+                                                                className={`text-xs border rounded max-w-[80px] ${sortConfigs[col]?.type === 'value' ? 'bg-blue-200 border-blue-400' : ''}`}
+                                                                value={sortConfigs[col]?.type === 'value' ? sortConfigs[col].field : ''}
+                                                                onChange={(e) => updateSort(col, 'value', e.target.value)}
+                                                            >
+                                                                <option value="">Sort By...</option>
+                                                                {values.map(v => (
+                                                                    <option key={v.id} value={v.field}>{v.field}</option>
+                                                                ))}
+                                                            </select>
+                                                        )}
+                                                    </div>
                                                 }
                                             />
                                         ))}
@@ -943,7 +1048,7 @@ export const ConfigPanel = ({
                                                 extraControls={
                                                     <div className="flex items-center gap-1 mr-2">
                                                         <button
-                                                            onClick={() => setFormatModal({ isOpen: true, valueId: val.id })}
+                                                            onClick={() => setFormatModal({ isOpen: true, valueId: val.id, rowField: null, columnField: null, type: 'value' })}
                                                             className="p-1 hover:bg-gray-200 rounded text-gray-500"
                                                             title="Format Settings"
                                                         >
@@ -1068,11 +1173,23 @@ export const ConfigPanel = ({
 
             <FormatSettingsModal
                 isOpen={formatModal.isOpen}
-                onClose={() => setFormatModal({ isOpen: false, valueId: null })}
-                initialFormat={values.find(v => v.id === formatModal.valueId)?.format}
+                onClose={() => setFormatModal({ isOpen: false, valueId: null, rowField: null, columnField: null, type: 'value' })}
+                initialFormat={
+                    formatModal.type === 'value'
+                        ? values.find(v => v.id === formatModal.valueId)?.format
+                        : formatModal.type === 'row'
+                            ? rowFormats[formatModal.rowField || '']
+                            : columnFormats[formatModal.columnField || '']
+                }
                 onSave={(format) => {
-                    setValues(values.map(v => v.id === formatModal.valueId ? { ...v, format } : v));
-                    setFormatModal({ isOpen: false, valueId: null });
+                    if (formatModal.type === 'value') {
+                        setValues(values.map(v => v.id === formatModal.valueId ? { ...v, format } : v));
+                    } else if (formatModal.type === 'row' && formatModal.rowField) {
+                        setRowFormats({ ...rowFormats, [formatModal.rowField]: format });
+                    } else if (formatModal.type === 'column' && formatModal.columnField) {
+                        setColumnFormats({ ...columnFormats, [formatModal.columnField]: format });
+                    }
+                    setFormatModal({ isOpen: false, valueId: null, rowField: null, columnField: null, type: 'value' });
                 }}
             />
 
@@ -1108,15 +1225,39 @@ export const ConfigPanel = ({
     );
 };
 
-const formatValue = (value: number | undefined, format?: FormatConfig) => {
+const formatValue = (value: number | string | undefined, format?: FormatConfig) => {
     if (value === undefined || value === null) return '-';
-    if (!format) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-    if (format.type === 'percent') {
-        return value.toLocaleString(undefined, { style: 'percent', minimumFractionDigits: format.decimals, maximumFractionDigits: format.decimals });
+    if (!format) {
+        if (typeof value === 'number') {
+            return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        }
+        return String(value);
     }
 
-    let formatted = value.toLocaleString(undefined, { minimumFractionDigits: format.decimals, maximumFractionDigits: format.decimals });
+    if (format.type === 'date' || format.type === 'datetime') {
+        const dateValue = typeof value === 'string' ? new Date(value) : new Date(value);
+        if (isNaN(dateValue.getTime())) return String(value);
+
+        const formatStr = format.dateFormat || (format.type === 'date' ? 'MM/DD/YYYY' : 'MM/DD/YYYY HH:mm:ss');
+        return formatDate(dateValue, formatStr);
+    }
+
+    const numValue = typeof value === 'number' ? value : Number(value);
+    if (isNaN(numValue)) return String(value);
+
+    if (format.type === 'percent') {
+        return numValue.toLocaleString(undefined, {
+            style: 'percent',
+            minimumFractionDigits: format.decimals ?? 2,
+            maximumFractionDigits: format.decimals ?? 2
+        });
+    }
+
+    let formatted = numValue.toLocaleString(undefined, {
+        minimumFractionDigits: format.decimals ?? 2,
+        maximumFractionDigits: format.decimals ?? 2
+    });
 
     if (format.type === 'currency') {
         return `${format.symbol || '$'}${formatted}`;
@@ -1125,16 +1266,49 @@ const formatValue = (value: number | undefined, format?: FormatConfig) => {
     return formatted;
 };
 
+const formatDate = (date: Date, format: string): string => {
+    const pad = (num: number) => String(num).padStart(2, '0');
+
+    const tokens: Record<string, string> = {
+        'YYYY': String(date.getFullYear()),
+        'YY': String(date.getFullYear()).slice(-2),
+        'MM': pad(date.getMonth() + 1),
+        'M': String(date.getMonth() + 1),
+        'DD': pad(date.getDate()),
+        'D': String(date.getDate()),
+        'HH': pad(date.getHours()),
+        'H': String(date.getHours()),
+        'hh': pad(date.getHours() % 12 || 12),
+        'h': String(date.getHours() % 12 || 12),
+        'mm': pad(date.getMinutes()),
+        'm': String(date.getMinutes()),
+        'ss': pad(date.getSeconds()),
+        's': String(date.getSeconds()),
+        'A': date.getHours() >= 12 ? 'PM' : 'AM',
+        'a': date.getHours() >= 12 ? 'pm' : 'am'
+    };
+
+    let result = format;
+    // Sort by length descending to avoid replacing substrings first
+    Object.keys(tokens).sort((a, b) => b.length - a.length).forEach(token => {
+        result = result.replace(new RegExp(token, 'g'), tokens[token]);
+    });
+
+    return result;
+};
+
 const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpen: boolean, onClose: () => void, onSave: (format: FormatConfig) => void, initialFormat?: FormatConfig }) => {
-    const [type, setType] = useState<'number' | 'currency' | 'percent'>(initialFormat?.type || 'number');
+    const [type, setType] = useState<'number' | 'currency' | 'percent' | 'date' | 'datetime'>(initialFormat?.type || 'number');
     const [decimals, setDecimals] = useState(initialFormat?.decimals ?? 2);
     const [symbol, setSymbol] = useState(initialFormat?.symbol || '$');
+    const [dateFormat, setDateFormat] = useState(initialFormat?.dateFormat || 'MM/DD/YYYY');
 
     useEffect(() => {
         if (isOpen) {
             setType(initialFormat?.type || 'number');
             setDecimals(initialFormat?.decimals ?? 2);
             setSymbol(initialFormat?.symbol || '$');
+            setDateFormat(initialFormat?.dateFormat || (initialFormat?.type === 'datetime' ? 'MM/DD/YYYY HH:mm:ss' : 'MM/DD/YYYY'));
         }
     }, [isOpen, initialFormat]);
 
@@ -1156,20 +1330,24 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
                             <option value="number">Number</option>
                             <option value="currency">Currency</option>
                             <option value="percent">Percentage</option>
+                            <option value="date">Date</option>
+                            <option value="datetime">Date & Time</option>
                         </select>
                     </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Decimals</label>
-                        <input
-                            type="number"
-                            min="0"
-                            max="10"
-                            value={decimals}
-                            onChange={(e) => setDecimals(parseInt(e.target.value))}
-                            className="w-full border rounded p-2 text-sm"
-                        />
-                    </div>
+                    {(type === 'number' || type === 'currency' || type === 'percent') && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Decimals</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="10"
+                                value={decimals}
+                                onChange={(e) => setDecimals(parseInt(e.target.value))}
+                                className="w-full border rounded p-2 text-sm"
+                            />
+                        </div>
+                    )}
 
                     {type === 'currency' && (
                         <div>
@@ -1183,12 +1361,40 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
                             />
                         </div>
                     )}
+
+                    {(type === 'date' || type === 'datetime') && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Date Format</label>
+                            <select
+                                value={dateFormat}
+                                onChange={(e) => setDateFormat(e.target.value)}
+                                className="w-full border rounded p-2 text-sm"
+                            >
+                                <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                                <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                                <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                                <option value="DD-MM-YYYY">DD-MM-YYYY</option>
+                                <option value="MMM DD, YYYY">MMM DD, YYYY</option>
+                                {type === 'datetime' && (
+                                    <>
+                                        <option value="MM/DD/YYYY HH:mm:ss">MM/DD/YYYY HH:mm:ss</option>
+                                        <option value="DD/MM/YYYY HH:mm:ss">DD/MM/YYYY HH:mm:ss</option>
+                                        <option value="YYYY-MM-DD HH:mm:ss">YYYY-MM-DD HH:mm:ss</option>
+                                        <option value="MM/DD/YYYY hh:mm:ss A">MM/DD/YYYY hh:mm:ss A</option>
+                                    </>
+                                )}
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Format tokens: YYYY (year), MM (month), DD (day), HH (24h), hh (12h), mm (min), ss (sec), A (AM/PM)
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
                     <button onClick={onClose} className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
                     <button
-                        onClick={() => onSave({ type, decimals, symbol })}
+                        onClick={() => onSave({ type, decimals, symbol, dateFormat })}
                         className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
                     >
                         Apply
