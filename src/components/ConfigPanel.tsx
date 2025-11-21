@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat } from '../types';
+import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat, HeaderRow } from '../types';
 import { PivotEngine } from '../engine/PivotEngine';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -11,6 +11,7 @@ import { SimpleCalcEditor } from './SimpleCalcEditor';
 import { TableCalcEditor } from './TableCalcEditor';
 import { LODCalcEditor } from './LODCalcEditor';
 import { ConditionalFormatModal } from './ConditionalFormatModal';
+import { HeaderRowEditor } from './HeaderRowEditor';
 import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
@@ -55,6 +56,7 @@ export const ConfigPanel = ({
     const [rowFormats, setRowFormats] = useState<Record<string, FormatConfig>>({});
     const [columnFormats, setColumnFormats] = useState<Record<string, FormatConfig>>({});
     const [conditionalFormats, setConditionalFormats] = useState<ConditionalFormat[]>([]);
+    const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
 
     const [manualSortModal, setManualSortModal] = useState<{ isOpen: boolean, field: string | null }>({
         isOpen: false,
@@ -85,6 +87,14 @@ export const ConfigPanel = ({
         fieldName: string | null;
         fieldType: 'row' | 'column' | 'value';
     }>({ isOpen: false, fieldName: null, fieldType: 'value' });
+
+    const [headerRowModal, setHeaderRowModal] = useState<{
+        isOpen: boolean;
+        editingHeaderRow: HeaderRow | null;
+    }>({ isOpen: false, editingHeaderRow: null });
+
+    const [availableFilters, setAvailableFilters] = useState<string[]>([]);
+    const [appliedFilters, setAppliedFilters] = useState<Record<string, { values: string[], isAll: boolean }>>({});
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -121,6 +131,7 @@ export const ConfigPanel = ({
                         if (savedConfig.rowFormats) setRowFormats(savedConfig.rowFormats);
                         if (savedConfig.columnFormats) setColumnFormats(savedConfig.columnFormats);
                         if (savedConfig.conditionalFormats) setConditionalFormats(savedConfig.conditionalFormats);
+                        if (savedConfig.headerRows) setHeaderRows(savedConfig.headerRows);
 
                         if (savedConfig.showGrandTotals !== undefined) setShowColumnGrandTotals(savedConfig.showGrandTotals);
                     }
@@ -131,6 +142,37 @@ export const ConfigPanel = ({
         };
         loadSettings();
     }, []);
+
+    useEffect(() => {
+        const fetchFilters = async () => {
+            if (!selectedWorksheet) {
+                setAvailableFilters([]);
+                setAppliedFilters({});
+                return;
+            }
+
+            try {
+                const filters = await selectedWorksheet.getFiltersAsync();
+                const filterNames = filters.map(f => f.fieldName);
+                setAvailableFilters(filterNames);
+
+                const filtersMap: Record<string, { values: string[], isAll: boolean }> = {};
+                filters.forEach(filter => {
+                    filtersMap[filter.fieldName] = {
+                        values: filter.appliedValues.map(v => String(v.value || v)),
+                        isAll: filter.isAllSelected
+                    };
+                });
+                setAppliedFilters(filtersMap);
+            } catch (e) {
+                console.error("Failed to fetch filters", e);
+                setAvailableFilters([]);
+                setAppliedFilters({});
+            }
+        };
+
+        fetchFilters();
+    }, [selectedWorksheet]);
 
     const availableColumns = useMemo(() => {
         const baseCols = summaryData?.columns.map(col => ({
@@ -195,7 +237,8 @@ export const ConfigPanel = ({
                 lodCalculations,
                 rowFormats,
                 columnFormats,
-                conditionalFormats
+                conditionalFormats,
+                headerRows
             };
             // @ts-ignore
             if (window.tableau) {
@@ -376,6 +419,125 @@ export const ConfigPanel = ({
     const handleEditLODCalculation = (lod: LODCalculation) => {
         setEditingLOD(lod);
         setShowLODEditor(true);
+    };
+
+    const handleSaveHeaderRow = (headerRow: HeaderRow) => {
+        if (headerRowModal.editingHeaderRow) {
+            setHeaderRows(prev => prev.map(h => h.id === headerRow.id ? headerRow : h));
+        } else {
+            setHeaderRows(prev => [...prev, headerRow]);
+        }
+        setHeaderRowModal({ isOpen: false, editingHeaderRow: null });
+    };
+
+    const handleEditHeaderRow = (headerRow: HeaderRow) => {
+        setHeaderRowModal({ isOpen: true, editingHeaderRow: headerRow });
+    };
+
+    const handleDeleteHeaderRow = (id: string) => {
+        setHeaderRows(prev => prev.filter(h => h.id !== id));
+    };
+
+    const handleDragEndHeaderRows = (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+
+        setHeaderRows((items) => {
+            const oldIndex = items.findIndex(h => h.id === active.id);
+            const newIndex = items.findIndex(h => h.id === over.id);
+            return arrayMove(items, oldIndex, newIndex);
+        });
+    };
+
+    const renderHeaderRows = () => {
+        if (headerRows.length === 0) return null;
+
+        return (
+            <div className="mb-4 space-y-2">
+                {headerRows.map(headerRow => {
+                    let content: ReactNode = null;
+
+                    if (headerRow.type === 'title') {
+                        if (headerRow.titleField) {
+                            // Get first unique value of the field
+                            const colIndex = summaryData?.columns.findIndex(c => c.fieldName === headerRow.titleField);
+                            if (colIndex !== undefined && colIndex !== -1 && summaryData) {
+                                const firstValue = summaryData.data[0]?.[colIndex];
+                                content = (
+                                    <div className="text-2xl font-bold text-gray-800">
+                                        {firstValue?.formattedValue || firstValue?.value || '(No Data)'}
+                                    </div>
+                                );
+                            } else {
+                                content = <div className="text-2xl font-bold text-gray-800">(Field Not Found)</div>;
+                            }
+                        } else {
+                            content = <div className="text-2xl font-bold text-gray-800">{headerRow.titleText || ''}</div>;
+                        }
+                    } else if (headerRow.type === 'filters') {
+                        const selectedFilters = headerRow.selectedFilters || [];
+                        if (selectedFilters.length === 0) {
+                            content = <div className="text-sm text-gray-500 italic">No filters selected</div>;
+                        } else {
+                            content = (
+                                <div className="text-sm text-gray-700 space-y-1">
+                                    {selectedFilters.map(filter => {
+                                        const filterData = appliedFilters[filter];
+                                        if (!filterData) {
+                                            return (
+                                                <div key={filter}>
+                                                    <span className="font-semibold">{filter}:</span> (No filter applied)
+                                                </div>
+                                            );
+                                        }
+                                        const displayValue = filterData.isAll
+                                            ? 'All'
+                                            : filterData.values.join(', ');
+                                        return (
+                                            <div key={filter}>
+                                                <span className="font-semibold">{filter}:</span> {displayValue}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        }
+                    } else if (headerRow.type === 'custom_field') {
+                        // Get first unique value of the custom field
+                        const colIndex = summaryData?.columns.findIndex(c => c.fieldName === headerRow.customField);
+                        if (colIndex !== undefined && colIndex !== -1 && summaryData) {
+                            const unique = new Set<string>();
+                            summaryData.data.forEach(row => {
+                                const val = row[colIndex];
+                                unique.add(val?.formattedValue || String(val?.value || ''));
+                            });
+                            const firstValue = Array.from(unique)[0];
+                            content = (
+                                <div className="text-sm text-gray-700">
+                                    <span className="font-semibold">{headerRow.customField}:</span> {firstValue || '(No Data)'}
+                                </div>
+                            );
+                        } else {
+                            content = <div className="text-sm text-gray-700">(Field Not Found)</div>;
+                        }
+                    } else if (headerRow.type === 'refresh_date') {
+                        const now = new Date();
+                        const formatted = formatDate(now, headerRow.refreshDateFormat || 'MM/DD/YYYY HH:mm:ss');
+                        content = (
+                            <div className="text-sm text-gray-600">
+                                <span className="font-semibold">Data Refreshed:</span> {formatted}
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <div key={headerRow.id} className="p-3 bg-gray-50 border-b">
+                            {content}
+                        </div>
+                    );
+                })}
+            </div>
+        );
     };
 
     const renderPivotTable = () => {
@@ -1145,6 +1307,55 @@ export const ConfigPanel = ({
                                         ))}
                                     </SortableContext>
                                 </div>
+
+                                <div className="border p-3 rounded-md flex-1 bg-purple-50/30">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <h3 className="font-medium text-sm text-purple-800">Header Rows</h3>
+                                        <button
+                                            onClick={() => setHeaderRowModal({ isOpen: true, editingHeaderRow: null })}
+                                            className="text-xs bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700"
+                                        >
+                                            + Add Header Row
+                                        </button>
+                                    </div>
+                                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEndHeaderRows}>
+                                        <SortableContext items={headerRows.map(h => h.id)} strategy={verticalListSortingStrategy}>
+                                            {headerRows.length === 0 ? (
+                                                <p className="text-xs text-gray-500 italic">No header rows configured</p>
+                                            ) : (
+                                                headerRows.map(headerRow => (
+                                                    <SortableItem
+                                                        key={headerRow.id}
+                                                        id={headerRow.id}
+                                                        label={(() => {
+                                                            if (headerRow.type === 'title') {
+                                                                return headerRow.titleField
+                                                                    ? `Title: ${headerRow.titleField}`
+                                                                    : `Title: ${headerRow.titleText || '(empty)'}`;
+                                                            } else if (headerRow.type === 'filters') {
+                                                                return `Filters (${headerRow.selectedFilters?.length || 0})`;
+                                                            } else if (headerRow.type === 'custom_field') {
+                                                                return `Field: ${headerRow.customField}`;
+                                                            } else {
+                                                                return `Refresh Date (${headerRow.refreshDateFormat})`;
+                                                            }
+                                                        })()}
+                                                        onRemove={() => handleDeleteHeaderRow(headerRow.id)}
+                                                        extraControls={
+                                                            <button
+                                                                onClick={() => handleEditHeaderRow(headerRow)}
+                                                                className="p-1 hover:bg-gray-200 rounded text-gray-500 mr-2"
+                                                                title="Edit Header Row"
+                                                            >
+                                                                ✎
+                                                            </button>
+                                                        }
+                                                    />
+                                                ))
+                                            )}
+                                        </SortableContext>
+                                    </DndContext>
+                                </div>
                             </DndContext >
                         </div >
                     </div >
@@ -1225,6 +1436,7 @@ export const ConfigPanel = ({
                             </div>
 
                             <div className="flex-1 overflow-auto p-4">
+                                {renderHeaderRows()}
                                 {renderPivotTable()}
                             </div>
                         </div>
@@ -1311,6 +1523,15 @@ export const ConfigPanel = ({
                         });
                     }
                 }}
+            />
+
+            <HeaderRowEditor
+                isOpen={headerRowModal.isOpen}
+                onClose={() => setHeaderRowModal({ isOpen: false, editingHeaderRow: null })}
+                onSave={handleSaveHeaderRow}
+                initialHeaderRow={headerRowModal.editingHeaderRow || undefined}
+                availableFields={summaryData?.columns.map(c => c.fieldName) || []}
+                availableFilters={availableFilters}
             />
         </div >
     );
@@ -1458,13 +1679,24 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
     const [decimals, setDecimals] = useState(initialFormat?.decimals ?? 2);
     const [symbol, setSymbol] = useState(initialFormat?.symbol || '$');
     const [dateFormat, setDateFormat] = useState(initialFormat?.dateFormat || 'MM/DD/YYYY');
+    const [useCustomDateFormat, setUseCustomDateFormat] = useState(false);
+
+    const presetFormats = {
+        date: ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY', 'MMM DD, YYYY'],
+        datetime: ['MM/DD/YYYY HH:mm:ss', 'DD/MM/YYYY HH:mm:ss', 'YYYY-MM-DD HH:mm:ss', 'MM/DD/YYYY hh:mm:ss A']
+    };
 
     useEffect(() => {
         if (isOpen) {
             setType(initialFormat?.type || 'number');
             setDecimals(initialFormat?.decimals ?? 2);
             setSymbol(initialFormat?.symbol || '$');
-            setDateFormat(initialFormat?.dateFormat || (initialFormat?.type === 'datetime' ? 'MM/DD/YYYY HH:mm:ss' : 'MM/DD/YYYY'));
+            const initFormat = initialFormat?.dateFormat || (initialFormat?.type === 'datetime' ? 'MM/DD/YYYY HH:mm:ss' : 'MM/DD/YYYY');
+            setDateFormat(initFormat);
+
+            // Check if the initial format is a custom format
+            const allPresets = [...(presetFormats.date || []), ...(presetFormats.datetime || [])];
+            setUseCustomDateFormat(!allPresets.includes(initFormat));
         }
     }, [isOpen, initialFormat]);
 
@@ -1519,29 +1751,43 @@ const FormatSettingsModal = ({ isOpen, onClose, onSave, initialFormat }: { isOpe
                     )}
 
                     {(type === 'date' || type === 'datetime') && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Date Format</label>
-                            <select
-                                value={dateFormat}
-                                onChange={(e) => setDateFormat(e.target.value)}
-                                className="w-full border rounded p-2 text-sm"
-                            >
-                                <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                                <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                                <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                                <option value="DD-MM-YYYY">DD-MM-YYYY</option>
-                                <option value="MMM DD, YYYY">MMM DD, YYYY</option>
-                                {type === 'datetime' && (
-                                    <>
-                                        <option value="MM/DD/YYYY HH:mm:ss">MM/DD/YYYY HH:mm:ss</option>
-                                        <option value="DD/MM/YYYY HH:mm:ss">DD/MM/YYYY HH:mm:ss</option>
-                                        <option value="YYYY-MM-DD HH:mm:ss">YYYY-MM-DD HH:mm:ss</option>
-                                        <option value="MM/DD/YYYY hh:mm:ss A">MM/DD/YYYY hh:mm:ss A</option>
-                                    </>
-                                )}
-                            </select>
-                            <p className="text-xs text-gray-500 mt-1">
-                                Format tokens: YYYY (year), MM (month), DD (day), HH (24h), hh (12h), mm (min), ss (sec), A (AM/PM)
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="block text-sm font-medium text-gray-700">Date Format</label>
+                                <button
+                                    type="button"
+                                    onClick={() => setUseCustomDateFormat(!useCustomDateFormat)}
+                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                >
+                                    {useCustomDateFormat ? 'Use Preset' : 'Custom Format'}
+                                </button>
+                            </div>
+
+                            {!useCustomDateFormat ? (
+                                <select
+                                    value={dateFormat}
+                                    onChange={(e) => setDateFormat(e.target.value)}
+                                    className="w-full border rounded p-2 text-sm"
+                                >
+                                    {(type === 'date' ? presetFormats.date : presetFormats.datetime).map(fmt => (
+                                        <option key={fmt} value={fmt}>{fmt}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={dateFormat}
+                                    onChange={(e) => setDateFormat(e.target.value)}
+                                    className="w-full border rounded p-2 text-sm font-mono"
+                                    placeholder="e.g., YYYY/MM/DD"
+                                />
+                            )}
+
+                            <p className="text-xs text-gray-500">
+                                <strong>Tokens:</strong> YYYY (year), MM (month), DD (day), HH (24h), hh (12h), mm (min), ss (sec), A (AM/PM)
+                            </p>
+                            <p className="text-xs text-gray-400 italic">
+                                Example: "YYYY/MM/DD - HH:mm" → "2024/12/25 - 14:30"
                             </p>
                         </div>
                     )}
