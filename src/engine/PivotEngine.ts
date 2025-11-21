@@ -1,10 +1,15 @@
 import type { TableauDataTable, TableauDataRow, CalculatedField, ValueField, PivotConfig, PivotNode } from '../types';
-import { evaluateFormula, evaluateAggregationFormula } from '../utils/simpleEvaluator';
+import { evaluateFormula, evaluateAggregationFormula, clearFormulaCache } from '../utils/simpleEvaluator';
 import { applyTableCalculations } from '../utils/tableCalcEvaluator';
 import { enrichWithLODCalculations } from '../utils/lodEvaluator';
 
 export class PivotEngine {
     static pivot(data: TableauDataTable, config: PivotConfig): PivotNode {
+        // Performance optimization: Clear formula cache when starting new pivot
+        // This ensures we don't keep old cached formulas in memory
+        clearFormulaCache();
+
+        console.log(`Starting pivot with ${data.totalRowCount.toLocaleString()} rows...`);
         // Enrich data with ROW-LEVEL calculated fields first
         let enrichedData = config.calculatedFields && config.calculatedFields.length > 0
             ? this.enrichWithCalculatedFields(data, config.calculatedFields)

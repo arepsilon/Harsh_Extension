@@ -29,6 +29,8 @@ export interface TableauDataTable {
     columns: TableauColumn[];
     data: TableauDataRow[];
     totalRowCount: number;
+    isLimited?: boolean; // Whether data was limited for performance
+    actualTotalRowCount?: number; // Actual total rows in data source
 }
 
 export interface TableauColumn {
