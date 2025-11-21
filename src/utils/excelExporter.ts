@@ -40,6 +40,11 @@ export const exportToExcel = async (options: ExportOptions) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pivot Table');
 
+    // Remove gridlines
+    worksheet.views = [
+        { showGridLines: false }
+    ];
+
     // Helper function to format date
     const formatDate = (date: Date, format: string): string => {
         const pad = (num: number) => String(num).padStart(2, '0');
@@ -71,37 +76,44 @@ export const exportToExcel = async (options: ExportOptions) => {
         return result;
     };
 
-    // Helper function to format value
-    const formatValue = (value: number | string | undefined, format?: FormatConfig): string | number => {
-        if (value === undefined || value === null) return '-';
+    // Helper function to format value - returns the value and Excel number format
+    const formatValue = (value: number | string | undefined, format?: FormatConfig): { value: any, numFmt?: string } => {
+        if (value === undefined || value === null) return { value: '-' };
 
         if (!format) {
             if (typeof value === 'number') {
-                return value;
+                return { value };
             }
-            return String(value);
+            return { value: String(value) };
         }
 
         if (format.type === 'date' || format.type === 'datetime') {
             const dateValue = typeof value === 'string' ? new Date(value) : new Date(value);
-            if (isNaN(dateValue.getTime())) return String(value);
+            if (isNaN(dateValue.getTime())) return { value: String(value) };
 
             const formatStr = format.dateFormat || (format.type === 'date' ? 'MM/DD/YYYY' : 'MM/DD/YYYY HH:mm:ss');
-            return formatDate(dateValue, formatStr);
+            return { value: formatDate(dateValue, formatStr) };
         }
 
         const numValue = typeof value === 'number' ? value : Number(value);
-        if (isNaN(numValue)) return String(value);
+        if (isNaN(numValue)) return { value: String(value) };
 
         if (format.type === 'percent') {
-            return `${(numValue * 100).toFixed(format.decimals ?? 2)}%`;
+            const decimals = format.decimals ?? 2;
+            const numFmt = `0.${'0'.repeat(decimals)}%`;
+            return { value: numValue, numFmt };
         }
 
         if (format.type === 'currency') {
-            return `${format.symbol || '$'}${numValue.toFixed(format.decimals ?? 2)}`;
+            const decimals = format.decimals ?? 2;
+            const symbol = format.symbol || '$';
+            const numFmt = `${symbol}#,##0.${'0'.repeat(decimals)}`;
+            return { value: numValue, numFmt };
         }
 
-        return numValue;
+        const decimals = format.decimals ?? 2;
+        const numFmt = `#,##0.${'0'.repeat(decimals)}`;
+        return { value: numValue, numFmt };
     };
 
     // Helper function to evaluate conditional format
@@ -174,6 +186,7 @@ export const exportToExcel = async (options: ExportOptions) => {
     if (headerRows.length > 0) {
         headerRows.forEach(headerRow => {
             let content = '';
+            let lineCount = 1;
 
             if (headerRow.type === 'title') {
                 if (headerRow.titleField && summaryData) {
@@ -198,7 +211,8 @@ export const exportToExcel = async (options: ExportOptions) => {
                         const displayValue = filterData.isAll ? 'All' : filterData.values.join(', ');
                         return `${filter}: ${displayValue}`;
                     });
-                    content = filterLines.join(' | ');
+                    content = filterLines.join('\n'); // Line separated
+                    lineCount = filterLines.length;
                 }
             } else if (headerRow.type === 'custom_field' && summaryData) {
                 const colIndex = summaryData.columns.findIndex(c => c.fieldName === headerRow.customField);
@@ -234,6 +248,17 @@ export const exportToExcel = async (options: ExportOptions) => {
                     pattern: 'solid',
                     fgColor: { argb: 'FFF3F4F6' }
                 };
+                cell.alignment = { wrapText: true, vertical: 'middle', horizontal: 'left' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+
+                // Set dynamic row height based on number of lines
+                const rowHeight = headerRow.type === 'title' ? 30 : (15 * lineCount);
+                worksheet.getRow(currentRow).height = rowHeight;
 
                 currentRow++;
             }
@@ -353,8 +378,21 @@ export const exportToExcel = async (options: ExportOptions) => {
 
                 // Apply formatting
                 if (cellValue && columnFormat) {
-                    cell.value = formatValue(cellValue as string, columnFormat);
+                    const formatted = formatValue(cellValue as string, columnFormat);
+                    cell.value = formatted.value;
+                    if (formatted.numFmt) {
+                        cell.numFmt = formatted.numFmt;
+                    }
                 }
+
+                // Apply center alignment and borders to headers
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
 
                 // Apply conditional formatting
                 const conditionalStyle = evaluateConditionalFormat(cellValue as string, columnField);
@@ -371,6 +409,32 @@ export const exportToExcel = async (options: ExportOptions) => {
                     }
                 }
             }
+        } else {
+            // Apply to value header row (last row)
+            for (let c = startCol; c <= endCol; c++) {
+                const cell = worksheet.getCell(r, c);
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+            }
+        }
+    }
+
+    // Apply borders and center alignment to row dimension headers
+    for (let c = 1; c <= rowDimCount; c++) {
+        for (let r = headerStartRow; r < headerStartRow + totalLevels; r++) {
+            const cell = worksheet.getCell(r, c);
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+            };
         }
     }
 
@@ -399,7 +463,8 @@ export const exportToExcel = async (options: ExportOptions) => {
                     config.values.forEach(v => {
                         const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
                         const value = child.values[gtKey] || 0;
-                        rowData.push(formatValue(value, v.format));
+                        const formatted = formatValue(value, v.format);
+                        rowData.push(formatted.value);
                     });
                 }
 
@@ -408,7 +473,8 @@ export const exportToExcel = async (options: ExportOptions) => {
                     const val = child.values[colKey] || 0;
                     const valPart = colKey.split('::').pop();
                     const valueField = config.values.find(v => v.field === valPart);
-                    rowData.push(formatValue(val, valueField?.format));
+                    const formatted = formatValue(val, valueField?.format);
+                    rowData.push(formatted.value);
                 });
 
                 // Row Grand Total (Right)
@@ -416,7 +482,8 @@ export const exportToExcel = async (options: ExportOptions) => {
                     config.values.forEach(v => {
                         const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
                         const value = child.values[gtKey] || 0;
-                        rowData.push(formatValue(value, v.format));
+                        const formatted = formatValue(value, v.format);
+                        rowData.push(formatted.value);
                     });
                 }
 
@@ -429,11 +496,23 @@ export const exportToExcel = async (options: ExportOptions) => {
                     const cellValue = cell.value;
                     const rowField = config.rows[i];
 
+                    // Apply borders
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                    };
+
                     if (rowField) {
                         // Apply row formatting
                         const rowFormat = rowFormats[rowField];
                         if (cellValue && rowFormat) {
-                            cell.value = formatValue(cellValue as string, rowFormat);
+                            const formatted = formatValue(cellValue as string, rowFormat);
+                            cell.value = formatted.value;
+                            if (formatted.numFmt) {
+                                cell.numFmt = formatted.numFmt;
+                            }
                         }
 
                         // Apply conditional formatting
@@ -453,7 +532,30 @@ export const exportToExcel = async (options: ExportOptions) => {
                     }
                 }
 
-                // Apply conditional formatting to value cells
+                // Apply formatting to left grand total cells
+                if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
+                    let gtColIndex = rowDimCount + 1;
+                    config.values.forEach(v => {
+                        const cell = worksheet.getCell(rowIndex, gtColIndex);
+                        const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                        const value = child.values[gtKey] || 0;
+                        const formatted = formatValue(value, v.format);
+
+                        if (formatted.numFmt) {
+                            cell.numFmt = formatted.numFmt;
+                        }
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                        cell.border = {
+                            top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                        };
+                        gtColIndex++;
+                    });
+                }
+
+                // Apply conditional formatting and number format to value cells
                 let colIndex = rowDimCount + 1;
 
                 if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
@@ -466,7 +568,22 @@ export const exportToExcel = async (options: ExportOptions) => {
                     const valPart = colKey.split('::').pop();
                     const valueField = config.values.find(v => v.field === valPart);
 
+                    // Apply borders and right alignment
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                    };
+                    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+
                     if (valueField) {
+                        // Apply number format
+                        const formatted = formatValue(val, valueField.format);
+                        if (formatted.numFmt) {
+                            cell.numFmt = formatted.numFmt;
+                        }
+
                         // Build compare values for field comparison
                         const compareValues: Record<string, number> = {};
                         config.values.forEach(v => {
@@ -492,6 +609,28 @@ export const exportToExcel = async (options: ExportOptions) => {
 
                     colIndex++;
                 });
+
+                // Apply formatting to right grand total cells
+                if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
+                    config.values.forEach(v => {
+                        const cell = worksheet.getCell(rowIndex, colIndex);
+                        const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                        const value = child.values[gtKey] || 0;
+                        const formatted = formatValue(value, v.format);
+
+                        if (formatted.numFmt) {
+                            cell.numFmt = formatted.numFmt;
+                        }
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                        cell.border = {
+                            top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                            right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                        };
+                        colIndex++;
+                    });
+                }
             } else {
                 renderRows(child, depth + 1, [...path, key]);
             }
@@ -506,7 +645,8 @@ export const exportToExcel = async (options: ExportOptions) => {
         if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
             config.values.forEach(v => {
                 const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
-                gtRow.push(formatValue(pivotTree.values[gtKey] || 0, v.format));
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                gtRow.push(formatted.value);
             });
         }
 
@@ -514,18 +654,93 @@ export const exportToExcel = async (options: ExportOptions) => {
             const val = pivotTree.values[colKey] || 0;
             const valPart = colKey.split('::').pop();
             const valueField = config.values.find(v => v.field === valPart);
-            gtRow.push(formatValue(val, valueField?.format));
+            const formatted = formatValue(val, valueField?.format);
+            gtRow.push(formatted.value);
         });
 
         // Right GT
         if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
             config.values.forEach(v => {
                 const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
-                gtRow.push(formatValue(pivotTree.values[gtKey] || 0, v.format));
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                gtRow.push(formatted.value);
             });
         }
         const row = worksheet.addRow(gtRow);
+        const rowIdx = row.number;
         row.font = { bold: true };
+
+        // Apply borders and formatting to grand total row
+        for (let c = 1; c <= rowDimCount; c++) {
+            const cell = worksheet.getCell(rowIdx, c);
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+            };
+        }
+
+        // Apply to left GT cells
+        let gtColIdx = rowDimCount + 1;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
+            config.values.forEach(v => {
+                const cell = worksheet.getCell(rowIdx, gtColIdx);
+                const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                if (formatted.numFmt) {
+                    cell.numFmt = formatted.numFmt;
+                }
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+                gtColIdx++;
+            });
+        }
+
+        // Apply to value cells
+        allKeys.forEach(colKey => {
+            const cell = worksheet.getCell(rowIdx, gtColIdx);
+            const val = pivotTree.values[colKey] || 0;
+            const valPart = colKey.split('::').pop();
+            const valueField = config.values.find(v => v.field === valPart);
+            const formatted = formatValue(val, valueField?.format);
+            if (formatted.numFmt) {
+                cell.numFmt = formatted.numFmt;
+            }
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+            };
+            gtColIdx++;
+        });
+
+        // Apply to right GT cells
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
+            config.values.forEach(v => {
+                const cell = worksheet.getCell(rowIdx, gtColIdx);
+                const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                if (formatted.numFmt) {
+                    cell.numFmt = formatted.numFmt;
+                }
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+                gtColIdx++;
+            });
+        }
     }
 
     renderRows(pivotTree);
@@ -538,7 +753,8 @@ export const exportToExcel = async (options: ExportOptions) => {
         if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
             config.values.forEach(v => {
                 const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
-                gtRow.push(formatValue(pivotTree.values[gtKey] || 0, v.format));
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                gtRow.push(formatted.value);
             });
         }
 
@@ -546,18 +762,93 @@ export const exportToExcel = async (options: ExportOptions) => {
             const val = pivotTree.values[colKey] || 0;
             const valPart = colKey.split('::').pop();
             const valueField = config.values.find(v => v.field === valPart);
-            gtRow.push(formatValue(val, valueField?.format));
+            const formatted = formatValue(val, valueField?.format);
+            gtRow.push(formatted.value);
         });
 
         // Right GT
         if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
             config.values.forEach(v => {
                 const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
-                gtRow.push(formatValue(pivotTree.values[gtKey] || 0, v.format));
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                gtRow.push(formatted.value);
             });
         }
         const row = worksheet.addRow(gtRow);
+        const rowIdx = row.number;
         row.font = { bold: true };
+
+        // Apply borders and formatting to grand total row
+        for (let c = 1; c <= rowDimCount; c++) {
+            const cell = worksheet.getCell(rowIdx, c);
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+            };
+        }
+
+        // Apply to left GT cells
+        let gtColIdx = rowDimCount + 1;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
+            config.values.forEach(v => {
+                const cell = worksheet.getCell(rowIdx, gtColIdx);
+                const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                if (formatted.numFmt) {
+                    cell.numFmt = formatted.numFmt;
+                }
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+                gtColIdx++;
+            });
+        }
+
+        // Apply to value cells
+        allKeys.forEach(colKey => {
+            const cell = worksheet.getCell(rowIdx, gtColIdx);
+            const val = pivotTree.values[colKey] || 0;
+            const valPart = colKey.split('::').pop();
+            const valueField = config.values.find(v => v.field === valPart);
+            const formatted = formatValue(val, valueField?.format);
+            if (formatted.numFmt) {
+                cell.numFmt = formatted.numFmt;
+            }
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+            };
+            gtColIdx++;
+        });
+
+        // Apply to right GT cells
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
+            config.values.forEach(v => {
+                const cell = worksheet.getCell(rowIdx, gtColIdx);
+                const gtKey = config.columns.length > 0 ? `__grand_total__::${v.field}` : v.field;
+                const formatted = formatValue(pivotTree.values[gtKey] || 0, v.format);
+                if (formatted.numFmt) {
+                    cell.numFmt = formatted.numFmt;
+                }
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                    right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                };
+                gtColIdx++;
+            });
+        }
     }
 
     // --- 4. Styling ---
