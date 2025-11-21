@@ -103,6 +103,20 @@ export interface FormatConfig {
     dateFormat?: string;  // e.g., 'MM/DD/YYYY', 'DD-MM-YYYY', 'YYYY-MM-DD'
 }
 
+export interface ConditionalFormatRule {
+    id: string;
+    condition: 'gt' | 'lt' | 'eq' | 'neq' | 'gte' | 'lte' | 'contains' | 'not_contains' | 'compare_field';
+    value?: string | number;
+    compareField?: string;  // For field-to-field comparison
+    fontColor?: string;
+    backgroundColor?: string;
+}
+
+export interface ConditionalFormat {
+    fieldName: string;
+    rules: ConditionalFormatRule[];
+}
+
 export interface ValueField {
     id: string;
     field: string;
