@@ -1,0 +1,6 @@
+{
+  "serverUrl": "https://your-tableau-server.com",
+  "tokenName": "your-token-name",
+  "tokenValue": "your-token-secret-value",
+  "siteId": "your-site-id"
+}
