@@ -2,6 +2,8 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import type { PivotNode, PivotConfig, HeaderRow, ConditionalFormat, FormatConfig, TableauDataTable } from '../types';
 
+export type TableStyle = 'classic' | 'professional_blue' | 'green_accent' | 'orange_warm' | 'purple_modern';
+
 interface ExportOptions {
     pivotTree: PivotNode | null;
     config: PivotConfig;
@@ -16,6 +18,55 @@ interface ExportOptions {
     columnFormats?: Record<string, FormatConfig>;
     appliedFilters?: Record<string, { values: string[], isAll: boolean }>;
     summaryData?: TableauDataTable | null;
+    tableStyle?: TableStyle;
+}
+
+interface StyleConfig {
+    headerBg: string;
+    headerFont: string;
+    alternateRowBg: string;
+    borderColor: string;
+}
+
+function getStyleConfig(style: TableStyle): StyleConfig {
+    switch (style) {
+        case 'professional_blue':
+            return {
+                headerBg: 'FF1F4E78',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFDEEAF6',
+                borderColor: 'FF8EA9DB'
+            };
+        case 'green_accent':
+            return {
+                headerBg: 'FF2E7D32',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFE8F5E9',
+                borderColor: 'FF81C784'
+            };
+        case 'orange_warm':
+            return {
+                headerBg: 'FFE65100',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFFFF3E0',
+                borderColor: 'FFFFB74D'
+            };
+        case 'purple_modern':
+            return {
+                headerBg: 'FF6A1B9A',
+                headerFont: 'FFFFFFFF',
+                alternateRowBg: 'FFF3E5F5',
+                borderColor: 'FFCE93D8'
+            };
+        case 'classic':
+        default:
+            return {
+                headerBg: 'FFF3F4F6',
+                headerFont: 'FF000000',
+                alternateRowBg: 'FFFFFFFF',
+                borderColor: 'FFD1D5DB'
+            };
+    }
 }
 
 export const exportToExcel = async (options: ExportOptions) => {
@@ -32,10 +83,15 @@ export const exportToExcel = async (options: ExportOptions) => {
         rowFormats = {},
         columnFormats = {},
         appliedFilters = {},
-        summaryData = null
+        summaryData = null,
+        tableStyle = 'classic'
     } = options;
 
     if (!pivotTree) return;
+
+    const styleConfig = getStyleConfig(tableStyle);
+    // TODO: Apply styleConfig to table headers, rows, and borders
+    void styleConfig;
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pivot Table');
@@ -100,19 +156,19 @@ export const exportToExcel = async (options: ExportOptions) => {
 
         if (format.type === 'percent') {
             const decimals = format.decimals ?? 2;
-            const numFmt = `0.${'0'.repeat(decimals)}%`;
+            const numFmt = decimals > 0 ? `0.${'0'.repeat(decimals)}%` : `0%`;
             return { value: numValue, numFmt };
         }
 
         if (format.type === 'currency') {
             const decimals = format.decimals ?? 2;
             const symbol = format.symbol || '$';
-            const numFmt = `${symbol}#,##0.${'0'.repeat(decimals)}`;
+            const numFmt = decimals > 0 ? `${symbol}#,##0.${'0'.repeat(decimals)}` : `${symbol}#,##0`;
             return { value: numValue, numFmt };
         }
 
         const decimals = format.decimals ?? 2;
-        const numFmt = `#,##0.${'0'.repeat(decimals)}`;
+        const numFmt = decimals > 0 ? `#,##0.${'0'.repeat(decimals)}` : `#,##0`;
         return { value: numValue, numFmt };
     };
 
@@ -184,6 +240,19 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // --- 0. Render Header Rows ---
     if (headerRows.length > 0) {
+        // Calculate total columns for proper merging
+        const allKeys = Object.keys(pivotTree.values)
+            .filter(k => !k.startsWith('__grand_total__'));
+        const rowDimCount = Math.max(1, config.rows.length);
+        let totalColumns = rowDimCount;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
+            totalColumns += config.values.length;
+        }
+        totalColumns += allKeys.length;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
+            totalColumns += config.values.length;
+        }
+
         headerRows.forEach(headerRow => {
             let content = '';
             let lineCount = 1;
@@ -235,7 +304,7 @@ export const exportToExcel = async (options: ExportOptions) => {
 
             if (content) {
                 worksheet.addRow([content]);
-                worksheet.mergeCells(currentRow, 1, currentRow, 10); // Merge across first 10 columns
+                worksheet.mergeCells(currentRow, 1, currentRow, totalColumns); // Merge across all columns
                 const cell = worksheet.getCell(currentRow, 1);
 
                 if (headerRow.type === 'title') {
@@ -293,11 +362,13 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // Grand Total Header (Left)
     if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
-        config.values.forEach(() => {
+        config.values.forEach((v) => {
             pivotHeaderRows[0].push('Grand Total');
-            for (let j = 1; j < totalLevels; j++) {
+            for (let j = 1; j < totalLevels - 1; j++) {
                 pivotHeaderRows[j].push(null);
             }
+            // Add field name on the last level (value level)
+            pivotHeaderRows[totalLevels - 1].push(v.field);
         });
     }
 
@@ -316,11 +387,13 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // Grand Total Header (Right)
     if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
-        config.values.forEach(() => {
+        config.values.forEach((v) => {
             pivotHeaderRows[0].push('Grand Total');
-            for (let j = 1; j < totalLevels; j++) {
+            for (let j = 1; j < totalLevels - 1; j++) {
                 pivotHeaderRows[j].push(null);
             }
+            // Add field name on the last level (value level)
+            pivotHeaderRows[totalLevels - 1].push(v.field);
         });
     }
 

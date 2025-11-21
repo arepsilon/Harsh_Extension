@@ -26,6 +26,13 @@ export function applyTableCalculations(
     calculations.forEach(calc => {
         evaluateCalculation(root, flatNodes, calc, config);
     });
+
+    // 3. Calculate grand totals for table calculations (if columns exist)
+    if (config.columns.length > 0) {
+        calculations.forEach(calc => {
+            calculateGrandTotalsForTableCalc(root, calc);
+        });
+    }
 }
 
 /**
@@ -211,7 +218,7 @@ function performCalculation(values: number[], type: string): number[] {
                 results.push(runningSum);
                 break;
             case 'percent_of_total':
-                results.push(totalSum === 0 ? 0 : (val / totalSum) * 100);
+                results.push(totalSum === 0 ? 0 : (val / totalSum));
                 break;
             case 'rank':
                 results.push(rankStandard[i]);
@@ -230,4 +237,53 @@ function performCalculation(values: number[], type: string): number[] {
         }
     }
     return results;
+}
+
+/**
+ * Calculate grand totals for table calculations.
+ * This handles cases like percent_of_total where we need to calculate
+ * each row's grand total as a percentage of the overall grand total.
+ */
+function calculateGrandTotalsForTableCalc(
+    root: PivotNode,
+    calc: TableCalculation
+): void {
+    // Collect all leaf nodes
+    const leafNodes: PivotNode[] = [];
+
+    function collectLeaves(node: PivotNode) {
+        if (node.isLeaf) {
+            leafNodes.push(node);
+        } else if (node.children) {
+            node.children.forEach(child => collectLeaves(child));
+        }
+    }
+
+    collectLeaves(root);
+
+    // For each leaf, calculate the grand total table calculation
+    // Grand total key format: __grand_total__::baseField
+    const grandTotalKey = `__grand_total__::${calc.baseField}`;
+
+    // Collect all grand total base values
+    const grandTotalValues: number[] = [];
+    leafNodes.forEach(node => {
+        const value = node.values[grandTotalKey] ?? 0;
+        grandTotalValues.push(value);
+    });
+
+    // Calculate the table calculation for grand totals
+    const grandTotalResults = performCalculation(grandTotalValues, calc.calculation);
+
+    // Store results back
+    grandTotalResults.forEach((val, idx) => {
+        const node = leafNodes[idx];
+        const resultKey = `__grand_total__::${calc.name}`;
+        node.values[resultKey] = val;
+
+        // Ensure root has this key
+        if (root.values[resultKey] === undefined) {
+            root.values[resultKey] = 0;
+        }
+    });
 }
