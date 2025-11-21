@@ -1,5 +1,5 @@
 import type { TableauDataRow, TableauColumn, LODCalculation } from '../types';
-import { parseAggregations } from './simpleEvaluator';
+import { parseAggregations, evaluateFormula } from './simpleEvaluator';
 
 /**
  * LOD (Level of Detail) Calculation Engine
@@ -38,13 +38,32 @@ import { parseAggregations } from './simpleEvaluator';
 
 /**
  * Parse an LOD aggregation formula and extract the field and function
- * Example: "SUM([Sales])" → { func: 'SUM', field: 'Sales' }
+ * Example: "SUM([Sales])" → { func: 'SUM', field: 'Sales', expression: '[Sales]' }
+ * Also supports conditionals: "SUM(IF [Sales] > 1000 THEN [Sales] ELSE 0 END)"
  */
-function parseLODAggregation(aggregation: string): { func: string; field: string } | null {
+function parseLODAggregation(aggregation: string): { func: string; field: string; expression: string } | null {
+  // First try to match aggregation with a simple field reference
   const parsed = parseAggregations(aggregation);
   if (parsed.length > 0) {
-    return { func: parsed[0].func, field: parsed[0].field };
+    return {
+      func: parsed[0].func,
+      field: parsed[0].field,
+      expression: `[${parsed[0].field}]`
+    };
   }
+
+  // If that doesn't work, try to match aggregation with a complex expression (like conditionals)
+  // Pattern: AGG_FUNC(expression)
+  const complexRegex = /^(SUM|AVG|MIN|MAX|COUNT|COUNTD)\s*\((.+)\)\s*$/is;
+  const match = aggregation.match(complexRegex);
+  if (match) {
+    return {
+      func: match[1],
+      field: '__expression__', // Placeholder for complex expressions
+      expression: match[2].trim()
+    };
+  }
+
   return null;
 }
 
@@ -63,26 +82,40 @@ function createGroupKey(row: TableauDataRow, dimensions: string[], columns: Tabl
 }
 
 /**
- * Get value from a row for a specific field
+ * Get value from a row for a specific field or evaluate an expression
  */
-function getFieldValue(row: TableauDataRow, fieldName: string, columns: TableauColumn[]): number | null {
-  const colIndex = columns.findIndex(c => c.fieldName === fieldName);
-  if (colIndex !== -1) {
-    const value = row[colIndex]?.value;
-    return typeof value === 'number' ? value : null;
+function getFieldValue(row: TableauDataRow, fieldOrExpression: string, columns: TableauColumn[]): number | null {
+  // Check if it's a simple field reference
+  if (fieldOrExpression.startsWith('[') && fieldOrExpression.endsWith(']')) {
+    const fieldName = fieldOrExpression.slice(1, -1);
+    const colIndex = columns.findIndex(c => c.fieldName === fieldName);
+    if (colIndex !== -1) {
+      const value = row[colIndex]?.value;
+      return typeof value === 'number' ? value : null;
+    }
+    return null;
   }
-  return null;
+
+  // Otherwise, it's an expression (possibly with conditionals) - evaluate it
+  return evaluateFormula(fieldOrExpression, row, columns);
 }
 
 /**
- * Get any value from a row for a specific field (for COUNT/COUNTD)
+ * Get any value from a row for a specific field or evaluate an expression (for COUNT/COUNTD)
  */
-function getFieldValueAny(row: TableauDataRow, fieldName: string, columns: TableauColumn[]): any {
-  const colIndex = columns.findIndex(c => c.fieldName === fieldName);
-  if (colIndex !== -1) {
-    return row[colIndex]?.value;
+function getFieldValueAny(row: TableauDataRow, fieldOrExpression: string, columns: TableauColumn[]): any {
+  // Check if it's a simple field reference
+  if (fieldOrExpression.startsWith('[') && fieldOrExpression.endsWith(']')) {
+    const fieldName = fieldOrExpression.slice(1, -1);
+    const colIndex = columns.findIndex(c => c.fieldName === fieldName);
+    if (colIndex !== -1) {
+      return row[colIndex]?.value;
+    }
+    return null;
   }
-  return null;
+
+  // Otherwise, it's an expression (possibly with conditionals) - evaluate it
+  return evaluateFormula(fieldOrExpression, row, columns);
 }
 
 /**
@@ -152,9 +185,10 @@ function evaluateFIXED(
     const groupKey = createGroupKey(row, lodCalc.dimensions, columns);
 
     // For COUNT/COUNTD, use any value type; for numeric aggregations, use numbers only
+    // Use the expression instead of just the field to support conditionals
     const value = isCountAggregation
-      ? getFieldValueAny(row, aggregationInfo.field, columns)
-      : getFieldValue(row, aggregationInfo.field, columns);
+      ? getFieldValueAny(row, aggregationInfo.expression, columns)
+      : getFieldValue(row, aggregationInfo.expression, columns);
 
     if (!groups.has(groupKey)) {
       groups.set(groupKey, []);

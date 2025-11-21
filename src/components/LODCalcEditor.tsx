@@ -200,24 +200,35 @@ export const LODCalcEditor = ({
                             placeholder="e.g., SUM([Sales])"
                         />
                         <p className="mt-2 text-xs text-gray-500">
-                            Use aggregation functions: SUM, AVG, MIN, MAX, COUNT, COUNTD
+                            Use aggregation functions: SUM, AVG, MIN, MAX, COUNT, COUNTD. Supports conditional logic!
                         </p>
 
                         {/* Examples */}
-                        <div className="mt-2 p-3 bg-blue-50 rounded text-xs text-blue-800">
+                        <div className="mt-2 p-3 bg-blue-50 rounded text-xs text-blue-800 max-h-64 overflow-y-auto">
                             <div className="font-semibold mb-2">LOD Calculation Examples:</div>
                             <div className="space-y-2 text-gray-700">
                                 <div>
                                     <div className="font-semibold text-purple-700">FIXED [Region]: SUM([Sales])</div>
-                                    <div className="ml-4">Total sales per region, regardless of other dimensions in view</div>
+                                    <div className="ml-4 text-[11px]">Total sales per region, regardless of other dimensions in view</div>
                                 </div>
                                 <div>
                                     <div className="font-semibold text-green-700">INCLUDE [Product]: AVG([Sales])</div>
-                                    <div className="ml-4">If view shows [Region], this calculates avg at Region+Product level</div>
+                                    <div className="ml-4 text-[11px]">If view shows [Region], this calculates avg at Region+Product level</div>
                                 </div>
                                 <div>
                                     <div className="font-semibold text-orange-700">EXCLUDE [Quarter]: SUM([Sales])</div>
-                                    <div className="ml-4">If view shows [Region, Quarter], this calculates just at Region level</div>
+                                    <div className="ml-4 text-[11px]">If view shows [Region, Quarter], this calculates just at Region level</div>
+                                </div>
+                                <div className="mt-3 pt-2 border-t border-blue-200">
+                                    <div className="font-semibold mb-1 text-purple-700">With Conditional Logic:</div>
+                                    <div className="break-all font-mono text-[10px]">FIXED [Region]: SUM(IF [Sales] &gt; 1000 THEN [Sales] ELSE 0 END)</div>
+                                    <div className="ml-4 text-[11px] mb-2">Sum only sales over 1000 per region</div>
+
+                                    <div className="break-all font-mono text-[10px]">FIXED [Category]: COUNT(IF [Profit] &gt; 0 THEN [OrderID] ELSE 0 END)</div>
+                                    <div className="ml-4 text-[11px] mb-2">Count profitable orders per category</div>
+
+                                    <div className="break-all font-mono text-[10px]">INCLUDE [Product]: AVG(CASE WHEN [Discount] &gt; 0 THEN [Sales] * (1 - [Discount]) ELSE [Sales] END)</div>
+                                    <div className="ml-4 text-[11px]">Average sales with discounts applied</div>
                                 </div>
                             </div>
                         </div>

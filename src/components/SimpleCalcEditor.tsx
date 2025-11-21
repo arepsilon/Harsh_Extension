@@ -82,9 +82,9 @@ export const SimpleCalcEditor = ({ isOpen, onClose, onSave, initialName, initial
                             placeholder="e.g., [Sales] * 0.08"
                         />
                         <p className="mt-2 text-xs text-gray-500">
-                            Use [Field Name] to reference fields. Supports +, -, *, /
+                            Use [Field Name] to reference fields. Supports +, -, *, /, IF, CASE statements
                         </p>
-                        <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-800">
+                        <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-800 max-h-64 overflow-y-auto">
                             <div className="font-semibold mb-1">Examples:</div>
                             <div className="font-mono space-y-1">
                                 <div className="font-semibold text-purple-700">Aggregations:</div>
@@ -96,6 +96,23 @@ export const SimpleCalcEditor = ({ isOpen, onClose, onSave, initialName, initial
                                 <div className="font-semibold text-purple-700 mt-2">Row-level:</div>
                                 <div>[Sales] * 1.1 <span className="text-gray-600">// 10% markup per row</span></div>
                                 <div>[Profit] / [Sales] <span className="text-gray-600">// Margin per row</span></div>
+
+                                <div className="font-semibold text-purple-700 mt-2">Conditionals (IF):</div>
+                                <div className="break-all">IF [Sales] &gt; 1000 THEN [Sales] * 0.9 ELSE [Sales] END</div>
+                                <div className="text-gray-600 text-[10px] mb-1">// 10% discount for sales over 1000</div>
+                                <div className="break-all">IF [Profit] &lt; 0 THEN 0 ELSE [Profit] END</div>
+                                <div className="text-gray-600 text-[10px] mb-1">// Set negative profits to 0</div>
+
+                                <div className="font-semibold text-purple-700 mt-2">Conditionals (CASE):</div>
+                                <div className="break-all">CASE WHEN [Sales] &gt; 5000 THEN [Sales] * 0.85 WHEN [Sales] &gt; 1000 THEN [Sales] * 0.9 ELSE [Sales] END</div>
+                                <div className="text-gray-600 text-[10px] mb-1">// Tiered discounts based on sales</div>
+
+                                <div className="font-semibold text-purple-700 mt-2">With Aggregations:</div>
+                                <div className="break-all">IF SUM([Sales]) &gt; 10000 THEN SUM([Sales]) * 0.95 ELSE SUM([Sales]) END</div>
+                                <div className="text-gray-600 text-[10px] mb-1">// 5% discount if total sales exceed 10000</div>
+
+                                <div className="font-semibold text-purple-700 mt-2">Operators:</div>
+                                <div className="text-[10px]">&gt;, &lt;, &gt;=, &lt;=, ==, !=, AND, OR, NOT</div>
                             </div>
                         </div>
                     </div>
