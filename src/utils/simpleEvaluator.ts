@@ -7,6 +7,23 @@ export interface CalculatedField {
     isAggregation?: boolean;
 }
 
+// Cache for compiled formulas to avoid re-parsing for every row
+interface CompiledFormula {
+    originalFormula: string;
+    compiledFunction: Function;
+    fieldReferences: string[];
+    columnIndices: number[]; // Pre-computed column indices for fast lookup
+}
+
+const formulaCache = new Map<string, CompiledFormula>();
+
+/**
+ * Clear the formula cache (useful when formulas change)
+ */
+export function clearFormulaCache() {
+    formulaCache.clear();
+}
+
 /**
  * Check if a formula contains aggregation functions
  */
@@ -175,12 +192,108 @@ export function evaluateAggregationFormula(
 }
 
 /**
+ * Compile a formula into an optimized function (with caching)
+ * This dramatically improves performance for large datasets
+ */
+function compileFormula(formula: string, columns: TableauColumn[]): CompiledFormula | null {
+    // Check cache first
+    const cacheKey = formula + '::' + columns.map(c => c.fieldName).join(',');
+    if (formulaCache.has(cacheKey)) {
+        return formulaCache.get(cacheKey)!;
+    }
+
+    try {
+        // Extract all field references and deduplicate
+        const fieldMatches = formula.match(/\[([^\]]+)\]/g) || [];
+        const fieldReferences = [...new Set(fieldMatches.map(match => match.slice(1, -1)))];
+
+        // Pre-compute column indices for fast lookup
+        const columnIndices = fieldReferences.map(fieldName => {
+            const idx = columns.findIndex(c => c.fieldName === fieldName);
+            return idx !== -1 ? idx : -1;
+        });
+
+        // Create parameter names for the function (v0, v1, v2, ...)
+        const paramNames = fieldReferences.map((_, idx) => `v${idx}`);
+
+        // Process formula - replace field references with parameter names
+        let processedFormula = formula;
+
+        // Replace field references with parameter names
+        fieldReferences.forEach((fieldName, idx) => {
+            const regex = new RegExp(`\\[${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'g');
+            processedFormula = processedFormula.replace(regex, `v${idx}`);
+        });
+
+        // Create the compiled function
+        const funcBody = `return ${processedFormula}`;
+        const compiledFunc = new Function(...paramNames, funcBody);
+
+        const compiled: CompiledFormula = {
+            originalFormula: formula,
+            compiledFunction: compiledFunc,
+            fieldReferences: fieldReferences,
+            columnIndices: columnIndices
+        };
+
+        // Cache it
+        formulaCache.set(cacheKey, compiled);
+        return compiled;
+    } catch (error) {
+        console.error('Formula compilation error:', error, 'Formula:', formula);
+        return null;
+    }
+}
+
+/**
  * Simple formula evaluator for basic arithmetic expressions with field references
  * Supports: +, -, *, / and field references like [Field Name]
  * Also supports conditional statements: IF...THEN...ELSE...END and CASE...WHEN...THEN...END
  * This is for ROW-LEVEL evaluation only (before pivot)
+ *
+ * OPTIMIZED: Uses formula compilation and caching for better performance on large datasets
  */
 export function evaluateFormula(
+    formula: string,
+    row: TableauDataRow,
+    columns: TableauColumn[]
+): number {
+    try {
+        // For formulas with conditionals, use the slower path (for now)
+        // TODO: Optimize conditional compilation in the future
+        if (/\b(IF|CASE)\b/i.test(formula)) {
+            return evaluateFormulaLegacy(formula, row, columns);
+        }
+
+        // Try to use compiled/cached version for simple formulas
+        const compiled = compileFormula(formula, columns);
+        if (!compiled) {
+            return evaluateFormulaLegacy(formula, row, columns);
+        }
+
+        // Gather field values in order using pre-computed indices (very fast!)
+        const fieldValues = compiled.columnIndices.map(colIndex => {
+            if (colIndex !== -1) {
+                const value = row[colIndex]?.value;
+                return typeof value === 'number' ? value : 0;
+            }
+            return 0;
+        });
+
+        // Execute compiled function
+        const result = compiled.compiledFunction(...fieldValues);
+        return typeof result === 'number' && !isNaN(result) ? result : 0;
+    } catch (error) {
+        console.error('Formula evaluation error:', error, 'Formula:', formula);
+        return 0;
+    }
+}
+
+/**
+ * Legacy formula evaluator (slower but supports all features)
+ * Used as fallback for complex formulas with conditionals
+ */
+function evaluateFormulaLegacy(
     formula: string,
     row: TableauDataRow,
     columns: TableauColumn[]
@@ -196,35 +309,24 @@ export function evaluateFormula(
         });
 
         // Replace field references [FieldName] with actual values
-        // Find all field references in the format [Something]
         const fieldMatches = processedFormula.match(/\[([^\]]+)\]/g);
 
         if (fieldMatches) {
             fieldMatches.forEach(match => {
-                // Extract field name (remove brackets)
                 const fieldName = match.slice(1, -1);
-
-                // Find the column index for this field
                 const colIndex = columns.findIndex(c => c.fieldName === fieldName);
 
                 if (colIndex !== -1) {
-                    // Get the value from the row
                     const cellValue = row[colIndex];
                     const numValue = typeof cellValue?.value === 'number' ? cellValue.value : 0;
-
-                    // Replace [FieldName] with the actual number
                     processedFormula = processedFormula.replace(match, String(numValue));
                 } else {
-                    // Field not found, use 0
                     processedFormula = processedFormula.replace(match, '0');
                 }
             });
         }
 
-        // Evaluate the arithmetic expression
-        // Using Function constructor instead of eval for slightly better safety
         const result = new Function('return ' + processedFormula)();
-
         return typeof result === 'number' && !isNaN(result) ? result : 0;
     } catch (error) {
         console.error('Formula evaluation error:', error, 'Formula:', formula);
