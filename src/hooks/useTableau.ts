@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import type { TableauWorksheet, TableauDataTable } from '../types';
 
-// Performance configuration
-const PAGE_SIZE = 10000; // Process in 10K chunks
-const PARALLEL_FETCHES = 5; // Number of pages to fetch concurrently
+// Backend API configuration
+const BACKEND_API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001/api';
 
 export const useTableau = () => {
     const [isInitialized, setIsInitialized] = useState(false);
@@ -34,12 +33,18 @@ export const useTableau = () => {
         initTableau();
     }, []);
 
-    const fetchSummaryData = async (worksheet: TableauWorksheet) => {
+    /**
+     * Fetch data from backend instead of directly from Tableau
+     * Backend handles: workbook download, XML parsing, VizQL query execution
+     */
+    const fetchSummaryData = async (worksheet: TableauWorksheet, pivotConfig?: any) => {
         setIsLoading(true);
         setLoadingProgress({ current: 0, total: 0 });
 
         try {
-            console.log('Fetching data sources...');
+            console.log('Fetching data from backend API...');
+
+            // Get datasource information (still needed for backend query)
             const dataSources = await worksheet.getDataSourcesAsync();
             const dataSource = dataSources[0];
 
@@ -47,117 +52,167 @@ export const useTableau = () => {
                 throw new Error("No data source found for this worksheet.");
             }
 
-            console.log('Fetching logical tables for data source:', dataSource.name);
-            const logicalTables = await dataSource.getLogicalTablesAsync();
-            const logicalTable = logicalTables[0];
+            // Get workbook ID from current context
+            // For now, use worksheet name as identifier
+            // In production, this should be the actual workbook ID
+            const workbookName = worksheet.name || 'unknown';
 
-            if (!logicalTable) {
-                throw new Error("No logical table found in data source.");
-            }
-
-            console.log('Fetching data reader for logical table:', logicalTable.caption);
-
-            // Use the reader for complete data access
-            const dataReader = await dataSource.getLogicalTableDataReaderAsync(
-                logicalTable.id,
-                PAGE_SIZE
-            );
-
-            const totalRowCount = dataReader.totalRowCount;
-            console.log('Data reader created:', {
-                pageCount: dataReader.pageCount,
-                columnCount: dataReader.columns?.length,
-                totalRowCount: totalRowCount
-            });
-
-            // Read all pages of data with PARALLEL fetching for better performance
-            let allData: any[] = [];
-            let columns: any[] = [];
-
-            // Try to get columns from dataReader if available
-            if (dataReader.columns) {
-                columns = dataReader.columns;
-            }
-
-            const startTime = performance.now();
-
-            // Fetch pages in parallel batches
-            for (let batch = 0; batch < dataReader.pageCount; batch += PARALLEL_FETCHES) {
-                const batchEnd = Math.min(batch + PARALLEL_FETCHES, dataReader.pageCount);
-                const pagePromises: Promise<any>[] = [];
-
-                // Create promises for all pages in this batch
-                for (let i = batch; i < batchEnd; i++) {
-                    pagePromises.push(dataReader.getPageAsync(i));
-                }
-
-                // Fetch all pages in batch concurrently
-                const pages = await Promise.all(pagePromises);
-
-                console.log(
-                    `Batch ${Math.floor(batch / PARALLEL_FETCHES) + 1} fetched: ` +
-                    `pages ${batch + 1}-${batchEnd} (${pages.length} pages, ` +
-                    `${pages.reduce((sum, p) => sum + (p.data?.length || 0), 0)} rows)`
+            // If pivot config is provided, use backend query endpoint
+            if (pivotConfig) {
+                return await fetchPivotDataFromBackend(
+                    workbookName,
+                    worksheet.name,
+                    dataSource.name,
+                    pivotConfig
                 );
-
-                // Process pages in batch
-                for (const page of pages) {
-                    // If columns not found yet, get from first page
-                    if (columns.length === 0 && page.columns) {
-                        columns = page.columns;
-                    }
-
-                    allData = allData.concat(page.data);
-                }
-
-                // Update progress
-                setLoadingProgress({
-                    current: allData.length,
-                    total: totalRowCount
-                });
-
-                // Small delay to allow UI updates
-                await new Promise(resolve => setTimeout(resolve, 0));
             }
 
-            const fetchTime = ((performance.now() - startTime) / 1000).toFixed(2);
-            console.log(
-                `Total rows fetched: ${allData.length.toLocaleString()} in ${fetchTime}s ` +
-                `(${(allData.length / parseFloat(fetchTime)).toFixed(0)} rows/sec)`
-            );
+            // Otherwise, fetch simple summary data
+            console.log(`Fetching summary data for worksheet: ${worksheet.name}`);
+            console.log('Note: Using backend VizQL Data Service for data fetching');
 
-            // Release the data reader
-            await dataReader.releaseAsync();
-
-            if (columns.length === 0) {
-                throw new Error("Could not determine columns from data source.");
-            }
-
-            // Format data to match TableauDataTable interface
-            const formattedData: TableauDataTable = {
-                columns: columns.map((col: any, idx: number) => ({
-                    fieldName: col.fieldName,
-                    dataType: col.dataType,
-                    index: idx
-                })),
-                data: allData,
-                totalRowCount: allData.length
-            };
-
-            console.log('Formatted data successfully:', {
-                columnCount: formattedData.columns.length,
-                rowCount: formattedData.totalRowCount,
-                columns: formattedData.columns.map(c => c.fieldName)
+            // For now, return empty data structure
+            // The actual pivot data will be fetched when user configures the pivot
+            setSummaryData({
+                columns: [],
+                data: [],
+                totalRowCount: 0
             });
 
-            setSummaryData(formattedData);
         } catch (error) {
-            console.error('Error fetching data from logical table:', error);
+            console.error('Error fetching data:', error);
             // @ts-ignore
             alert(`Failed to fetch data: ${error.message || String(error)}`);
         } finally {
             setIsLoading(false);
             setLoadingProgress({ current: 0, total: 0 });
+        }
+    };
+
+    /**
+     * Fetch pivot data from backend API
+     */
+    const fetchPivotDataFromBackend = async (
+        workbookId: string,
+        worksheetName: string,
+        datasourceLuid: string,
+        config: any
+    ) => {
+        try {
+            console.log('Calling backend API: /query/pivot');
+
+            const response = await fetch(`${BACKEND_API_URL}/query/pivot`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    workbookId,
+                    worksheetName,
+                    datasourceLuid,
+                    rows: config.rows || [],
+                    columns: config.columns || [],
+                    values: config.values || [],
+                    filters: config.filters || [],
+                    calculatedFields: config.calculatedFields || [],
+                    showRowGrandTotals: config.showRowGrandTotals || false,
+                    showColumnGrandTotals: config.showColumnGrandTotals || false,
+                    showSubtotals: config.showSubtotals || false
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Backend query failed');
+            }
+
+            const result = await response.json();
+
+            if (!result.success) {
+                throw new Error(result.error || 'Query failed');
+            }
+
+            console.log(`✓ Received ${result.data.data.length} rows from backend`);
+
+            // Convert backend response to TableauDataTable format
+            const formattedData: TableauDataTable = {
+                columns: result.data.metadata.fields.map((field: any, idx: number) => ({
+                    fieldName: field.fieldCaption || field.fieldName,
+                    dataType: field.dataType,
+                    index: idx
+                })),
+                data: result.data.data,
+                totalRowCount: result.data.metadata.rowCount
+            };
+
+            setSummaryData(formattedData);
+
+            return {
+                data: formattedData,
+                totals: result.data.totals
+            };
+
+        } catch (error: any) {
+            console.error('Backend query error:', error);
+            throw error;
+        }
+    };
+
+    /**
+     * Get workbook metadata from backend
+     */
+    const getWorkbookMetadata = async (workbookId: string) => {
+        try {
+            console.log('Fetching workbook metadata from backend...');
+
+            const response = await fetch(`${BACKEND_API_URL}/workbook/metadata`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ workbookId })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch workbook metadata');
+            }
+
+            const result = await response.json();
+            console.log('✓ Workbook metadata retrieved');
+
+            return result.data;
+        } catch (error: any) {
+            console.error('Error fetching workbook metadata:', error);
+            throw error;
+        }
+    };
+
+    /**
+     * Get datasource metadata from backend
+     */
+    const getDatasourceMetadata = async (datasourceLuid: string) => {
+        try {
+            console.log('Fetching datasource metadata from backend...');
+
+            const response = await fetch(`${BACKEND_API_URL}/datasource/metadata`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ datasourceLuid })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch datasource metadata');
+            }
+
+            const result = await response.json();
+            console.log(`✓ Retrieved metadata for ${result.data.data.length} fields`);
+
+            return result.data;
+        } catch (error: any) {
+            console.error('Error fetching datasource metadata:', error);
+            throw error;
         }
     };
 
@@ -168,6 +223,9 @@ export const useTableau = () => {
         setSelectedWorksheet,
         summaryData,
         fetchSummaryData,
+        fetchPivotDataFromBackend,
+        getWorkbookMetadata,
+        getDatasourceMetadata,
         isLoading,
         loadingProgress,
     };
