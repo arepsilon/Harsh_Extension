@@ -11,7 +11,7 @@ export class TableauConfig {
     private static instance: TableauConfig;
     private config: TableauPATConfig | null = null;
 
-    private constructor() {}
+    private constructor() { }
 
     public static getInstance(): TableauConfig {
         if (!TableauConfig.instance) {
@@ -36,8 +36,8 @@ export class TableauConfig {
             this.config = JSON.parse(configData);
 
             // Validate required fields
-            if (!this.config?.serverUrl || !this.config?.tokenName || !this.config?.tokenValue) {
-                throw new Error('Invalid PAT configuration: missing required fields (serverUrl, tokenName, tokenValue)');
+            if (!this.config?.tableau_server || !this.config?.pat_name || !this.config?.pat_secret) {
+                throw new Error('Invalid PAT configuration: missing required fields (tableau_server, pat_name, pat_secret, site_content_url)');
             }
 
             console.log(`✓ Loaded PAT configuration from ${filePath}`);
@@ -67,7 +67,7 @@ export class TableauConfig {
      * Get server URL
      */
     public getServerUrl(): string {
-        return this.getConfig().serverUrl;
+        return this.getConfig().tableau_server;
     }
 
     /**

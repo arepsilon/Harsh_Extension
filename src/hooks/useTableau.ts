@@ -1,91 +1,79 @@
-import { useState, useEffect } from 'react';
-import type { TableauWorksheet, TableauDataTable } from '../types';
+import { useState } from 'react';
+import type { TableauDataTable } from '../types';
+import axios from 'axios';
 
 // Backend API configuration
-const BACKEND_API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001/api';
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001/api';
+
+export interface WorksheetConfiguration {
+    rows: string[];
+    columns: string[];
+    values: Array<{ field: string; aggregation: string }>;
+    calculatedFields: Array<{ name: string; formula: string; dataType: string }>;
+    filters: any[];
+}
 
 export const useTableau = () => {
-    const [isInitialized, setIsInitialized] = useState(false);
-    const [worksheets, setWorksheets] = useState<TableauWorksheet[]>([]);
-    const [selectedWorksheet, setSelectedWorksheet] = useState<TableauWorksheet | null>(null);
     const [summaryData, setSummaryData] = useState<TableauDataTable | null>(null);
+    const [worksheetConfig, setWorksheetConfig] = useState<WorksheetConfiguration | null>(null);
+    const [datasourceLuid, setDatasourceLuid] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
-    const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0 });
-
-    useEffect(() => {
-        const initTableau = async () => {
-            try {
-                // @ts-ignore
-                if (window.tableau) {
-                    // @ts-ignore
-                    await window.tableau.extensions.initializeAsync();
-                    setIsInitialized(true);
-
-                    // @ts-ignore
-                    const dashboard = window.tableau.extensions.dashboardContent.dashboard;
-                    setWorksheets(dashboard.worksheets);
-                }
-            } catch (error) {
-                console.error('Error initializing Tableau Extension:', error);
-            }
-        };
-
-        initTableau();
-    }, []);
+    const [error, setError] = useState<string | null>(null);
 
     /**
-     * Fetch data from backend instead of directly from Tableau
-     * Backend handles: workbook download, XML parsing, VizQL query execution
+     * Fetch worksheet configuration and data from backend
      */
-    const fetchSummaryData = async (worksheet: TableauWorksheet, pivotConfig?: any) => {
+    const fetchWorksheetData = async (workbookId: string, datasourceLuidInput: string, worksheetName: string) => {
         setIsLoading(true);
-        setLoadingProgress({ current: 0, total: 0 });
+        setError(null);
 
         try {
-            console.log('Fetching data from backend API...');
+            console.log('Fetching worksheet configuration from backend...');
 
-            // Get datasource information (still needed for backend query)
-            const dataSources = await worksheet.getDataSourcesAsync();
-            const dataSource = dataSources[0];
+            // Step 1: Get worksheet configuration
+            const response = await axios.post(`${backendUrl}/workbook/metadata`, {
+                workbookId,
+                datasourceLuid: datasourceLuidInput || undefined,
+                worksheetName
+            });
 
-            if (!dataSource) {
-                throw new Error("No data source found for this worksheet.");
+            if (!response.data.success) {
+                throw new Error(response.data.error || 'Failed to fetch worksheet configuration');
             }
 
-            // Get workbook ID from current context
-            // For now, use worksheet name as identifier
-            // In production, this should be the actual workbook ID
-            const workbookName = worksheet.name || 'unknown';
+            const {
+                datasourceLuid: finalDatasourceLuid,
+                worksheetConfig: config,
+                datasourceFields = []
+            } = response.data.data;
 
-            // If pivot config is provided, use backend query endpoint
-            if (pivotConfig) {
-                return await fetchPivotDataFromBackend(
-                    workbookName,
-                    worksheet.name,
-                    dataSource.name,
-                    pivotConfig
-                );
-            }
+            console.log('✓ Worksheet configuration loaded:', config);
+            console.log(`✓ Loaded ${datasourceFields.length} datasource fields`);
+            setWorksheetConfig(config);
+            setDatasourceLuid(finalDatasourceLuid);
 
-            // Otherwise, fetch simple summary data
-            console.log(`Fetching summary data for worksheet: ${worksheet.name}`);
-            console.log('Note: Using backend VizQL Data Service for data fetching');
-
-            // For now, return empty data structure
-            // The actual pivot data will be fetched when user configures the pivot
+            // Convert datasource fields to TableauDataTable format
             setSummaryData({
-                columns: [],
+                columns: datasourceFields.map((field: any, idx: number) => ({
+                    fieldName: field.fieldName,
+                    dataType: field.dataType || 'string',
+                    index: idx
+                })),
                 data: [],
                 totalRowCount: 0
             });
 
-        } catch (error) {
-            console.error('Error fetching data:', error);
-            // @ts-ignore
-            alert(`Failed to fetch data: ${error.message || String(error)}`);
+            return {
+                config,
+                datasourceLuid: finalDatasourceLuid
+            };
+
+        } catch (error: any) {
+            console.error('Error fetching worksheet data:', error);
+            setError(error.message || 'Failed to fetch worksheet data');
+            throw error;
         } finally {
             setIsLoading(false);
-            setLoadingProgress({ current: 0, total: 0 });
         }
     };
 
@@ -101,55 +89,42 @@ export const useTableau = () => {
         try {
             console.log('Calling backend API: /query/pivot');
 
-            const response = await fetch(`${BACKEND_API_URL}/query/pivot`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    workbookId,
-                    worksheetName,
-                    datasourceLuid,
-                    rows: config.rows || [],
-                    columns: config.columns || [],
-                    values: config.values || [],
-                    filters: config.filters || [],
-                    calculatedFields: config.calculatedFields || [],
-                    showRowGrandTotals: config.showRowGrandTotals || false,
-                    showColumnGrandTotals: config.showColumnGrandTotals || false,
-                    showSubtotals: config.showSubtotals || false
-                })
+            const response = await axios.post(`${backendUrl}/query/pivot`, {
+                workbookId,
+                worksheetName,
+                datasourceLuid,
+                rows: config.rows || [],
+                columns: config.columns || [],
+                values: config.values || [],
+                filters: config.filters || [],
+                calculatedFields: config.calculatedFields || [],
+                showRowGrandTotals: config.showRowGrandTotals || false,
+                showColumnGrandTotals: config.showColumnGrandTotals || false,
+                showSubtotals: config.showSubtotals || false
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Backend query failed');
+            if (!response.data.success) {
+                throw new Error(response.data.error || 'Query failed');
             }
 
-            const result = await response.json();
-
-            if (!result.success) {
-                throw new Error(result.error || 'Query failed');
-            }
-
-            console.log(`✓ Received ${result.data.data.length} rows from backend`);
+            console.log(`✓ Received ${response.data.data.data.length} rows from backend`);
 
             // Convert backend response to TableauDataTable format
             const formattedData: TableauDataTable = {
-                columns: result.data.metadata.fields.map((field: any, idx: number) => ({
+                columns: response.data.data.metadata.fields.map((field: any, idx: number) => ({
                     fieldName: field.fieldCaption || field.fieldName,
                     dataType: field.dataType,
                     index: idx
                 })),
-                data: result.data.data,
-                totalRowCount: result.data.metadata.rowCount
+                data: response.data.data.data,
+                totalRowCount: response.data.data.metadata.rowCount
             };
 
             setSummaryData(formattedData);
 
             return {
                 data: formattedData,
-                totals: result.data.totals
+                totals: response.data.data.totals
             };
 
         } catch (error: any) {
@@ -158,75 +133,13 @@ export const useTableau = () => {
         }
     };
 
-    /**
-     * Get workbook metadata from backend
-     */
-    const getWorkbookMetadata = async (workbookId: string) => {
-        try {
-            console.log('Fetching workbook metadata from backend...');
-
-            const response = await fetch(`${BACKEND_API_URL}/workbook/metadata`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ workbookId })
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch workbook metadata');
-            }
-
-            const result = await response.json();
-            console.log('✓ Workbook metadata retrieved');
-
-            return result.data;
-        } catch (error: any) {
-            console.error('Error fetching workbook metadata:', error);
-            throw error;
-        }
-    };
-
-    /**
-     * Get datasource metadata from backend
-     */
-    const getDatasourceMetadata = async (datasourceLuid: string) => {
-        try {
-            console.log('Fetching datasource metadata from backend...');
-
-            const response = await fetch(`${BACKEND_API_URL}/datasource/metadata`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ datasourceLuid })
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch datasource metadata');
-            }
-
-            const result = await response.json();
-            console.log(`✓ Retrieved metadata for ${result.data.data.length} fields`);
-
-            return result.data;
-        } catch (error: any) {
-            console.error('Error fetching datasource metadata:', error);
-            throw error;
-        }
-    };
-
     return {
-        isInitialized,
-        worksheets,
-        selectedWorksheet,
-        setSelectedWorksheet,
         summaryData,
-        fetchSummaryData,
+        worksheetConfig,
+        datasourceLuid,
+        fetchWorksheetData,
         fetchPivotDataFromBackend,
-        getWorkbookMetadata,
-        getDatasourceMetadata,
         isLoading,
-        loadingProgress,
+        error,
     };
 };

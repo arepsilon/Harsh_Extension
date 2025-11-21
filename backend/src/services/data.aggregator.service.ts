@@ -8,7 +8,7 @@ import { DataQueryResult } from '../types/vizql.types';
 export class DataAggregatorService {
     private static instance: DataAggregatorService;
 
-    private constructor() {}
+    private constructor() { }
 
     public static getInstance(): DataAggregatorService {
         if (!DataAggregatorService.instance) {
@@ -54,7 +54,7 @@ export class DataAggregatorService {
      * Merge totals into main dataset (optional advanced feature)
      * This can be used to inject total rows directly into the data
      */
-    public mergeT otalsIntoData(
+    public mergeTotalsIntoData(
         mainData: any[],
         rowGrandTotals?: any[],
         columnGrandTotals?: any[]

@@ -11,7 +11,7 @@ import tableauConfig from '../config/tableau.config';
 export class WorkbookService {
     private static instance: WorkbookService;
 
-    private constructor() {}
+    private constructor() { }
 
     public static getInstance(): WorkbookService {
         if (!WorkbookService.instance) {
@@ -22,23 +22,23 @@ export class WorkbookService {
 
     /**
      * Download workbook from Tableau Server
-     * @param workbookId - The ID or LUID of the workbook
+     * @param workbookId - The LUID of the workbook
      * @returns Buffer containing the .twb or .twbx file
      */
     public async downloadWorkbook(workbookId: string): Promise<Buffer> {
         try {
-            const token = await authService.getAuthToken();
             const config = tableauConfig.getConfig();
-            const serverUrl = config.serverUrl;
+            const serverUrl = config.tableau_server;
+            const apiVersion = config.api_version || '3.20';
 
-            // Get site ID from auth service
-            await authService.signIn(); // Ensure we're signed in
+            // Ensure we're authenticated and get the actualsite ID from the auth response
             const authToken = await authService.getAuthToken();
+            const siteId = await authService.getSiteId();
 
-            // Download workbook using REST API
-            const downloadUrl = `${serverUrl}/api/3.20/sites/${config.siteId || 'default'}/workbooks/${workbookId}/content`;
+            // Download workbook using REST API with the authenticated site ID
+            const downloadUrl = `${serverUrl}/api/${apiVersion}/sites/${siteId}/workbooks/${workbookId}/content`;
 
-            console.log(`Downloading workbook: ${workbookId}`);
+            console.log(`Downloading workbook from site ${siteId}: ${workbookId}`);
 
             const response = await axios.get(downloadUrl, {
                 headers: {
@@ -92,7 +92,7 @@ export class WorkbookService {
 
     /**
      * Download and extract workbook XML in one step
-     * @param workbookId - The ID or LUID of the workbook
+     * @param workbookId - The LUID of the workbook
      * @returns XML content as string
      */
     public async downloadAndExtract(workbookId: string): Promise<string> {

@@ -34,17 +34,18 @@ export class AuthService {
      */
     public async signIn(): Promise<AuthToken> {
         const config = tableauConfig.getConfig();
-        const serverUrl = config.serverUrl;
+        const serverUrl = config.tableau_server;
+        const apiVersion = config.api_version || '3.20';
 
         try {
-            const signInUrl = `${serverUrl}/api/3.20/auth/signin`;
+            const signInUrl = `${serverUrl}/api/${apiVersion}/auth/signin`;
 
             const requestBody = {
                 credentials: {
-                    personalAccessTokenName: config.tokenName,
-                    personalAccessTokenSecret: config.tokenValue,
+                    personalAccessTokenName: config.pat_name,
+                    personalAccessTokenSecret: config.pat_secret,
                     site: {
-                        contentUrl: config.siteId || ''
+                        contentUrl: config.site_content_url
                     }
                 }
             };
@@ -81,6 +82,16 @@ export class AuthService {
     }
 
     /**
+     * Get authenticated site ID
+     */
+    public async getSiteId(): Promise<string> {
+        if (!this.authToken) {
+            await this.signIn();
+        }
+        return this.authToken!.siteId;
+    }
+
+    /**
      * Get authenticated axios instance for VizQL requests
      */
     public async getAuthenticatedClient(): Promise<AxiosInstance> {
@@ -108,7 +119,8 @@ export class AuthService {
 
         try {
             const config = tableauConfig.getConfig();
-            const signOutUrl = `${config.serverUrl}/api/3.20/auth/signout`;
+            const apiVersion = config.api_version || '3.20';
+            const signOutUrl = `${config.tableau_server}/api/${apiVersion}/auth/signout`;
 
             await this.axiosInstance.post(
                 signOutUrl,

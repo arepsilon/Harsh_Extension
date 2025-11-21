@@ -51,11 +51,16 @@ export class XMLParserService {
                 worksheets[worksheetName] = worksheetInfo;
             }
 
+            // Extract all datasource fields/columns
+            const datasourceFields = this.extractDatasourceFields(datasources[0]);
+
             console.log(`✓ Parsed ${Object.keys(worksheets).length} worksheets`);
+            console.log(`✓ Extracted ${datasourceFields.length} datasource fields`);
 
             return {
                 datasourceLuid,
-                worksheets
+                worksheets,
+                datasourceFields
             };
         } catch (error: any) {
             console.error('XML parsing failed:', error.message);
@@ -204,6 +209,34 @@ export class XMLParserService {
         }
 
         return filters;
+    }
+
+    /**
+     * Extract all fields from datasource
+     */
+    private extractDatasourceFields(datasourceNode: any): any[] {
+        const fields: any[] = [];
+
+        try {
+            const columns = this.extractArray(datasourceNode?.column);
+
+            for (const col of columns) {
+                const fieldName = col['@_caption'] || col['@_name'];
+                if (!fieldName) continue;
+
+                fields.push({
+                    fieldName,
+                    dataType: col['@_datatype'] || 'string',
+                    role: col['@_role'] || 'dimension',
+                    type: col['@_type'] || 'nominal',
+                    isCalculated: !!col.calculation
+                });
+            }
+        } catch (error) {
+            console.warn('Could not extract datasource fields:', error);
+        }
+
+        return fields;
     }
 
     /**

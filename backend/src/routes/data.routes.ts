@@ -19,18 +19,24 @@ router.get('/health', (req: Request, res: Response) => {
 });
 
 /**
- * Get workbook metadata
+ * Get workbook metadata and specific worksheet configuration
  * Downloads workbook, extracts XML, and parses worksheet configurations
  */
 router.post('/workbook/metadata', async (req: Request, res: Response) => {
     try {
-        const { workbookId } = req.body;
+        const { workbookId, datasourceLuid, worksheetName } = req.body;
 
         if (!workbookId) {
             return res.status(400).json({ error: 'workbookId is required' });
         }
+        if (!worksheetName) {
+            return res.status(400).json({ error: 'worksheetName is required' });
+        }
 
-        console.log(`\n=== Fetching Workbook Metadata: ${workbookId} ===`);
+        console.log(`\n=== Fetching Workbook Metadata ===`);
+        console.log(`Workbook ID: ${workbookId}`);
+        console.log(`Worksheet: ${worksheetName}`);
+        console.log(`Datasource LUID: ${datasourceLuid || 'auto-detect'}`);
 
         // Download and extract workbook XML
         const xmlContent = await workbookService.downloadAndExtract(workbookId);
@@ -38,9 +44,28 @@ router.post('/workbook/metadata', async (req: Request, res: Response) => {
         // Parse XML to get worksheet configurations
         const workbookMetadata = xmlParserService.parseWorkbook(xmlContent);
 
+        // Get specific worksheet configuration
+        const worksheetConfig = workbookMetadata.worksheets[worksheetName];
+
+        if (!worksheetConfig) {
+            const availableWorksheets = Object.keys(workbookMetadata.worksheets);
+            return res.status(404).json({
+                error: `Worksheet "${worksheetName}" not found`,
+                availableWorksheets
+            });
+        }
+
+        // Use provided datasourceLuid or fall back to the one from XML
+        const finalDatasourceLuid = datasourceLuid || workbookMetadata.datasourceLuid;
+
         res.json({
             success: true,
-            data: workbookMetadata
+            data: {
+                datasourceLuid: finalDatasourceLuid,
+                worksheetConfig,
+                availableWorksheets: Object.keys(workbookMetadata.worksheets),
+                datasourceFields: workbookMetadata.datasourceFields || []
+            }
         });
     } catch (error: any) {
         console.error('Error fetching workbook metadata:', error.message);
@@ -56,19 +81,14 @@ router.post('/workbook/metadata', async (req: Request, res: Response) => {
  */
 router.post('/datasource/metadata', async (req: Request, res: Response) => {
     try {
-        const { datasourceLuid } = req.body;
-
-        if (!datasourceLuid) {
-            return res.status(400).json({ error: 'datasourceLuid is required' });
-        }
-
-        console.log(`\n=== Fetching Datasource Metadata: ${datasourceLuid} ===`);
-
-        const metadata = await vizqlService.getMetadata(datasourceLuid);
+        // NOTE: Datasource field metadata is now extracted from workbook XML
+        // and returned in the /workbook/metadata endpoint
+        // This endpoint is deprecated but kept for backwards compatibility
 
         res.json({
             success: true,
-            data: metadata
+            message: 'Datasource metadata is now included in /workbook/metadata response',
+            data: []
         });
     } catch (error: any) {
         console.error('Error fetching datasource metadata:', error.message);

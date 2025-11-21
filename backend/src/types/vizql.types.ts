@@ -8,10 +8,11 @@
 // ============================================================================
 
 export interface TableauPATConfig {
-    serverUrl: string;
-    tokenName: string;
-    tokenValue: string;
-    siteId?: string;
+    tableau_server: string;
+    api_version?: string;
+    site_content_url: string;
+    pat_name: string;
+    pat_secret: string;
 }
 
 export interface AuthToken {
@@ -72,8 +73,8 @@ export interface VizQLField {
 
 export interface VizQLTableCalculation {
     tableCalcType: 'RUNNING_TOTAL' | 'MOVING_CALCULATION' | 'DIFFERENCE_FROM'
-        | 'PERCENT_DIFFERENCE_FROM' | 'PERCENT_FROM' | 'PERCENT_OF_TOTAL'
-        | 'RANK' | 'PERCENTILE';
+    | 'PERCENT_DIFFERENCE_FROM' | 'PERCENT_FROM' | 'PERCENT_OF_TOTAL'
+    | 'RANK' | 'PERCENTILE';
     dimensions: VizQLField[];
     aggregation: AggregationFunction;
 }
@@ -239,6 +240,7 @@ export interface CalculatedFieldInfo {
 export interface WorkbookMetadata {
     datasourceLuid: string;
     worksheets: Record<string, WorksheetInfo>;
+    datasourceFields?: any[];  // All fields from datasource with their metadata
 }
 
 // ============================================================================

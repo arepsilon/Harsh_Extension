@@ -1,6 +1,7 @@
 {
-  "serverUrl": "https://your-tableau-server.com",
-  "tokenName": "your-token-name",
-  "tokenValue": "your-token-secret-value",
-  "siteId": "your-site-id"
+  "tableau_server": "https://your-tableau-server.com",
+  "api_version": "3.20",
+  "site_content_url": "",
+  "pat_name": "your-token-name",
+  "pat_secret": "your-token-secret"
 }

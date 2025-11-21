@@ -1,26 +1,24 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import type { TableauWorksheet, TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat, HeaderRow } from '../types';
+import type { TableauDataTable, ValueField, CalculatedField, TableCalculation, LODCalculation, FormatConfig, ConditionalFormat, HeaderRow } from '../types';
+import type { WorksheetConfiguration } from '../hooks/useTableau';
 import { PivotEngine } from '../engine/PivotEngine';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { SortableItem } from './SortableItem';
 import { ManualSortModal } from './ManualSortModal';
-import { SimpleCalcEditor } from './SimpleCalcEditor';
-import { TableCalcEditor } from './TableCalcEditor';
-import { LODCalcEditor } from './LODCalcEditor';
 import { ConditionalFormatModal } from './ConditionalFormatModal';
 import { HeaderRowEditor } from './HeaderRowEditor';
-import { isAggregationFormula } from '../utils/simpleEvaluator';
 import { exportToExcel } from '../utils/excelExporter';
 
 interface ConfigPanelProps {
     onClose: () => void;
-    worksheets: TableauWorksheet[];
-    selectedWorksheet: TableauWorksheet | null;
-    onSelectWorksheet: (worksheet: TableauWorksheet) => void;
+    worksheetConfig: WorksheetConfiguration;
     summaryData: TableauDataTable | null;
+    datasourceLuid: string;
+    workbookId: string;
+    worksheetName: string;
     isLoading: boolean;
 }
 
@@ -32,10 +30,11 @@ interface SortConfig {
 
 export const ConfigPanel = ({
     onClose,
-    worksheets,
-    selectedWorksheet,
-    onSelectWorksheet,
+    worksheetConfig,
     summaryData,
+    datasourceLuid,
+    workbookId,
+    worksheetName,
     isLoading
 }: ConfigPanelProps) => {
     const [rows, setRows] = useState<string[]>([]);
@@ -143,36 +142,38 @@ export const ConfigPanel = ({
         loadSettings();
     }, []);
 
+    // Auto-populate rows, columns, and values from worksheet configuration
     useEffect(() => {
-        const fetchFilters = async () => {
-            if (!selectedWorksheet) {
-                setAvailableFilters([]);
-                setAppliedFilters({});
-                return;
+        if (worksheetConfig) {
+            console.log('Auto-populating from worksheet config:', worksheetConfig);
+
+            // Set rows
+            setRows(worksheetConfig.rows || []);
+
+            // Set columns
+            setColumns(worksheetConfig.columns || []);
+
+            // Set values with proper format
+            const valueFields: ValueField[] = (worksheetConfig.values || []).map((v, idx) => ({
+                id: `${v.field}-${idx}`,
+                field: v.field,
+                agg: v.aggregation as any,
+                type: 'field'
+            }));
+            setValues(valueFields);
+
+            // Set calculated fields if available
+            if (worksheetConfig.calculatedFields && worksheetConfig.calculatedFields.length > 0) {
+                const calcFields = worksheetConfig.calculatedFields.map((c, idx) => ({
+                    id: `calc-${idx}`,
+                    name: c.name,
+                    formula: c.formula,
+                    isAggregation: false // We'll need to determine this if needed
+                }));
+                setCalculatedFields(calcFields);
             }
-
-            try {
-                const filters = await selectedWorksheet.getFiltersAsync();
-                const filterNames = filters.map(f => f.fieldName);
-                setAvailableFilters(filterNames);
-
-                const filtersMap: Record<string, { values: string[], isAll: boolean }> = {};
-                filters.forEach(filter => {
-                    filtersMap[filter.fieldName] = {
-                        values: filter.appliedValues.map(v => String(v.value || v)),
-                        isAll: filter.isAllSelected
-                    };
-                });
-                setAppliedFilters(filtersMap);
-            } catch (e) {
-                console.error("Failed to fetch filters", e);
-                setAvailableFilters([]);
-                setAppliedFilters({});
-            }
-        };
-
-        fetchFilters();
-    }, [selectedWorksheet]);
+        }
+    }, [worksheetConfig]);
 
     const availableColumns = useMemo(() => {
         const baseCols = summaryData?.columns.map(col => ({
