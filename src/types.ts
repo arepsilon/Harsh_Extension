@@ -1,9 +1,16 @@
+export interface TableauFilter {
+    fieldName: string;
+    appliedValues: any[];
+    isAllSelected: boolean;
+}
+
 export interface TableauWorksheet {
     name: string;
     getSummaryDataAsync: (options?: any) => Promise<TableauDataTable>;
     getUnderlyingDataAsync: (options?: any) => Promise<TableauDataTable>;
     getUnderlyingTableDataReaderAsync: (pageRowCount: number, options?: any) => Promise<any>;
     getDataSourcesAsync: () => Promise<TableauDataSource[]>;
+    getFiltersAsync: () => Promise<TableauFilter[]>;
 }
 
 export interface TableauDataSource {
