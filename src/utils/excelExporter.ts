@@ -184,6 +184,19 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // --- 0. Render Header Rows ---
     if (headerRows.length > 0) {
+        // Calculate total columns for proper merging
+        const allKeys = Object.keys(pivotTree.values)
+            .filter(k => !k.startsWith('__grand_total__'));
+        const rowDimCount = Math.max(1, config.rows.length);
+        let totalColumns = rowDimCount;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
+            totalColumns += config.values.length;
+        }
+        totalColumns += allKeys.length;
+        if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
+            totalColumns += config.values.length;
+        }
+
         headerRows.forEach(headerRow => {
             let content = '';
             let lineCount = 1;
@@ -235,7 +248,7 @@ export const exportToExcel = async (options: ExportOptions) => {
 
             if (content) {
                 worksheet.addRow([content]);
-                worksheet.mergeCells(currentRow, 1, currentRow, 10); // Merge across first 10 columns
+                worksheet.mergeCells(currentRow, 1, currentRow, totalColumns); // Merge across all columns
                 const cell = worksheet.getCell(currentRow, 1);
 
                 if (headerRow.type === 'title') {
@@ -293,11 +306,13 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // Grand Total Header (Left)
     if (showRowGrandTotals && rowGrandTotalsPosition === 'left') {
-        config.values.forEach(() => {
+        config.values.forEach((v) => {
             pivotHeaderRows[0].push('Grand Total');
-            for (let j = 1; j < totalLevels; j++) {
+            for (let j = 1; j < totalLevels - 1; j++) {
                 pivotHeaderRows[j].push(null);
             }
+            // Add field name on the last level (value level)
+            pivotHeaderRows[totalLevels - 1].push(v.field);
         });
     }
 
@@ -316,11 +331,13 @@ export const exportToExcel = async (options: ExportOptions) => {
 
     // Grand Total Header (Right)
     if (showRowGrandTotals && rowGrandTotalsPosition === 'right') {
-        config.values.forEach(() => {
+        config.values.forEach((v) => {
             pivotHeaderRows[0].push('Grand Total');
-            for (let j = 1; j < totalLevels; j++) {
+            for (let j = 1; j < totalLevels - 1; j++) {
                 pivotHeaderRows[j].push(null);
             }
+            // Add field name on the last level (value level)
+            pivotHeaderRows[totalLevels - 1].push(v.field);
         });
     }
 

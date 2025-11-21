@@ -211,7 +211,7 @@ function performCalculation(values: number[], type: string): number[] {
                 results.push(runningSum);
                 break;
             case 'percent_of_total':
-                results.push(totalSum === 0 ? 0 : (val / totalSum) * 100);
+                results.push(totalSum === 0 ? 0 : (val / totalSum));
                 break;
             case 'rank':
                 results.push(rankStandard[i]);
