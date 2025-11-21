@@ -67,56 +67,24 @@ export const useTableau = () => {
                 );
             }
 
-            // Otherwise, fetch datasource metadata so UI has field information
+            // Fetch datasource metadata from backend
             console.log(`Fetching datasource metadata for: ${dataSource.name}`);
 
-            try {
-                const metadata = await getDatasourceMetadata(dataSource.name);
+            const metadata = await getDatasourceMetadata(dataSource.name);
 
-                // Convert metadata to TableauDataTable format for compatibility
-                const formattedData: TableauDataTable = {
-                    columns: metadata.data.map((field: any, idx: number) => ({
-                        fieldName: field.fieldCaption || field.fieldName,
-                        dataType: field.dataType,
-                        index: idx
-                    })),
-                    data: [], // No actual data rows yet - will be fetched when pivot is configured
-                    totalRowCount: 0
-                };
+            // Convert metadata to TableauDataTable format for compatibility
+            const formattedData: TableauDataTable = {
+                columns: metadata.data.map((field: any, idx: number) => ({
+                    fieldName: field.fieldCaption || field.fieldName,
+                    dataType: field.dataType,
+                    index: idx
+                })),
+                data: [], // No actual data rows yet - will be fetched when pivot is configured
+                totalRowCount: 0
+            };
 
-                setSummaryData(formattedData);
-                console.log(`✓ Loaded metadata for ${formattedData.columns.length} fields`);
-            } catch (metadataError: any) {
-                console.warn('Backend metadata fetch failed, falling back to Tableau API:', metadataError.message);
-
-                // Fallback: Use Tableau Extensions API to get field info
-                const logicalTables = await dataSource.getLogicalTablesAsync();
-                const logicalTable = logicalTables[0];
-
-                if (logicalTable) {
-                    const dataReader = await dataSource.getLogicalTableDataReaderAsync(
-                        logicalTable.id,
-                        1 // Just 1 row to get column info
-                    );
-
-                    const columns = dataReader.columns || [];
-                    await dataReader.releaseAsync();
-
-                    setSummaryData({
-                        columns: columns.map((col: any, idx: number) => ({
-                            fieldName: col.fieldName,
-                            dataType: col.dataType,
-                            index: idx
-                        })),
-                        data: [],
-                        totalRowCount: 0
-                    });
-
-                    console.log(`✓ Loaded ${columns.length} fields from Tableau API (fallback)`);
-                } else {
-                    throw new Error("Could not get field metadata from backend or Tableau");
-                }
-            }
+            setSummaryData(formattedData);
+            console.log(`✓ Loaded metadata for ${formattedData.columns.length} fields`);
 
         } catch (error) {
             console.error('Error fetching data:', error);
